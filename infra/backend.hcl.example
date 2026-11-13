@@ -1,0 +1,3 @@
+# Copy to backend.hcl (gitignored) and set your bucket name.
+bucket = "choosey-tfstate-<account-id>"
+region = "ap-southeast-2"

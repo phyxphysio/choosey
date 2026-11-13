@@ -22,14 +22,16 @@ The secret lives in Terraform state and the Lambda environment, never in git.
 Rotate: `terraform apply -replace=random_password.origin_verify`.
 
 ## One-time setup
-1. **State bucket** (already created): `choosey-tfstate-519125620995` in ap-southeast-2,
-   versioned, SSE-S3, public access blocked, TLS-only bucket policy. To recreate:
+1. **State bucket**: `choosey-tfstate-<account-id>` in ap-southeast-2, versioned, SSE-S3,
+   public access blocked, TLS-only bucket policy. Create it with:
    ```sh
    B=choosey-tfstate-<account-id>; R=ap-southeast-2
    aws s3api create-bucket --bucket $B --region $R --create-bucket-configuration LocationConstraint=$R --object-ownership BucketOwnerEnforced
    aws s3api put-public-access-block --bucket $B --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
    aws s3api put-bucket-versioning --bucket $B --versioning-configuration Status=Enabled
    aws s3api put-bucket-encryption --bucket $B --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"},"BucketKeyEnabled":true}]}'
+   aws s3api put-bucket-policy --bucket $B --policy "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"DenyInsecureTransport\",\"Effect\":\"Deny\",\"Principal\":\"*\",\"Action\":\"s3:*\",\"Resource\":[\"arn:aws:s3:::$B\",\"arn:aws:s3:::$B/*\"],\"Condition\":{\"Bool\":{\"aws:SecureTransport\":\"false\"}}}]}"
+   cp backend.hcl.example backend.hcl   # then set bucket = "$B"
    ```
 2. **Domain**: register `choosey.app` in Cloudflare Registrar (creates the zone).
 3. **Cloudflare API token**: My Profile → API Tokens → Create Token → "Edit zone DNS"
@@ -40,7 +42,7 @@ Rotate: `terraform apply -replace=random_password.origin_verify`.
 ## Apply
 ```sh
 cd infra
-terraform init
+terraform init -backend-config=backend.hcl
 terraform plan -out tfplan
 terraform apply tfplan
 ```

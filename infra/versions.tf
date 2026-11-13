@@ -20,12 +20,12 @@ terraform {
     }
   }
 
-  # State bucket is created once by hand (see infra/README.md). Native S3
-  # locking (use_lockfile) means no DynamoDB lock table is needed.
+  # State bucket is created once by hand (see infra/README.md). Its name
+  # contains the AWS account ID, so it is passed at init time from a
+  # gitignored backend.hcl: terraform init -backend-config=backend.hcl
+  # Native S3 locking (use_lockfile) means no DynamoDB lock table is needed.
   backend "s3" {
-    bucket       = "choosey-tfstate-519125620995"
     key          = "choosey/prod.tfstate"
-    region       = "ap-southeast-2"
     encrypt      = true
     use_lockfile = true
   }
