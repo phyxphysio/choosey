@@ -109,10 +109,16 @@ cargo lambda build --release --arm64 --output-format zip -p choosey-web
 # -> target/lambda/choosey/bootstrap.zip (handler: bootstrap, runtime: provided.al2023, arm64)
 ```
 
-Needs [cargo-lambda](https://www.cargo-lambda.info/) and zig. CI does this on every push to `main`
-and deploys with `aws lambda update-function-code` after assuming `vars.AWS_DEPLOY_ROLE_ARN` over
-GitHub OIDC, in the `production` environment. The deploy job skips cleanly while
-`AWS_DEPLOY_ROLE_ARN` is unset.
+Needs [cargo-lambda](https://www.cargo-lambda.info/) and zig.
+
+### CI/CD
+
+`.github/workflows/ci.yml` runs on pull requests and pushes: fmt, clippy, tests, the DynamoDB
+Local test (service container), `cargo deny`, `terraform fmt`/`validate` (when `infra/` exists) and
+the Lambda zip build. On pushes to `main`, once all of those pass, the `deploy` job (GitHub
+Environment `production`) assumes `vars.AWS_DEPLOY_ROLE_ARN` in `vars.AWS_REGION` over OIDC and
+runs `aws lambda update-function-code --publish` on `vars.LAMBDA_FUNCTION_NAME` with the zip built
+earlier in the run. It skips cleanly while `AWS_DEPLOY_ROLE_ARN` is unset.
 
 ## Security notes
 
