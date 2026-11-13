@@ -5,3 +5,9 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+async-trait = "0.1.92"
+choosey-core = { path = "../core" }
+thiserror = "2.0.21"
+
+[dev-dependencies]
+tokio = { version = "1.54.1", features = ["rt", "macros"] }
