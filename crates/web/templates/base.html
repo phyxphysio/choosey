@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  {#- htmx settings. No injected indicator <style> and no eval, so the strict CSP holds.
+      historyCacheSize 0 stops htmx copying pages (and their secret edit URLs) into localStorage.
+      Error responses are swapped too, so validation messages show up. -#}
+  <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"historyCacheSize":0,"refreshOnHistoryMiss":true,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"[45]..","swap":true,"error":true}]}'>
+  <meta name="referrer" content="no-referrer">
+  <title>{% block title %}{% endblock %} · {{ app }}</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/{{ assets.css }}">
+  <script src="/static/{{ assets.htmx }}" defer></script>
+</head>
+<body hx-boost="true">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <a class="brand" href="/">{{ app }}</a>
+  </header>
+  <main id="main" tabindex="-1">
+    {% block main %}{% endblock %}
+  </main>
+  <footer class="site-footer">
+    <p>{{ app }} helps you weigh up options. No accounts: whoever has a link can use it.</p>
+  </footer>
+</body>
+</html>

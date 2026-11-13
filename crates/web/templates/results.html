@@ -1,0 +1,36 @@
+{#- Ranked results. Shared by the edit page (Score and Results steps) and the read-only view. -#}
+{% if let Some(m) = results.message %}
+<p class="muted">{{ m }}</p>
+{% else %}
+<ol class="ranking">
+  {% for r in results.rows %}
+  <li class="result">
+    <div class="result-head">
+      <span class="rank">{{ r.rank }}</span>
+      <span class="result-name">{{ r.name }}</span>
+      <span class="total">{{ r.total }}</span>
+    </div>
+    {% if r.incomplete %}
+    <p class="badge incomplete">Incomplete: {{ r.coverage }} of the weight scored</p>
+    {% endif %}
+    {#- Breakdown bar: SVG geometry attributes, not inline styles (see Segment in views.rs). -#}
+    <svg class="bar" viewBox="0 0 100 10" preserveAspectRatio="none" role="img" aria-label="{{ r.summary }}">
+      <rect class="bar-bg" x="0" y="0" width="100" height="10"></rect>
+      {% for s in r.segments %}
+      <rect class="seg {{ s.class }}" x="{{ s.x }}" y="0" width="{{ s.width }}" height="10"><title>{{ s.label }}</title></rect>
+      {% endfor %}
+    </svg>
+  </li>
+  {% endfor %}
+</ol>
+{% if !results.legend.is_empty() %}
+<ul class="legend" aria-label="Colour key">
+  {% for l in results.legend %}
+  <li><svg class="swatch" viewBox="0 0 10 10" aria-hidden="true"><rect class="seg {{ l.class }}" width="10" height="10"></rect></svg>{{ l.name }}</li>
+  {% endfor %}
+</ul>
+{% endif %}
+<p class="muted small">Totals are out of 100 and count only the criteria each option has been scored on.
+  Bars show points earned out of 100 across all weighted criteria{% if results.any_incomplete %}, so
+  unscored criteria leave a gap{% endif %}.</p>
+{% endif %}

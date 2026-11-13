@@ -1,0 +1,22 @@
+{#- Fields shared by the "add" and "edit" criterion forms. Expects: prefix, name, kind, unit, worst, best. -#}
+<label for="cn-{{ prefix }}">Name</label>
+<input id="cn-{{ prefix }}" name="name" type="text" required maxlength="{{ limits.name }}" value="{{ name }}"{% if prefix == "new" %} placeholder="e.g. Commute"{% endif %}>
+<label for="ck-{{ prefix }}">How is it scored?</label>
+<select id="ck-{{ prefix }}" name="kind">
+  <option value="rated"{% if kind == "rated" %} selected{% endif %}>Rating 0-10</option>
+  <option value="higher"{% if kind == "higher" %} selected{% endif %}>Number, higher is better (e.g. pay)</option>
+  <option value="lower"{% if kind == "lower" %} selected{% endif %}>Number, lower is better (e.g. price)</option>
+</select>
+<fieldset class="numeric-fields">
+  <legend>For numbers only</legend>
+  <label for="cu-{{ prefix }}">Unit <span class="muted">(optional)</span></label>
+  <input id="cu-{{ prefix }}" name="unit" type="text" maxlength="{{ limits.unit }}" value="{{ unit }}" placeholder="e.g. minutes">
+  <p class="muted small">Optional bounds: values at or beyond "worst" score 0, at or beyond "best" score 10.
+    Leave both empty to scale between your options' lowest and highest values.</p>
+  <div class="row">
+    <span class="field"><label for="cw-{{ prefix }}">Worst</label>
+      <input id="cw-{{ prefix }}" name="worst" type="number" inputmode="decimal" step="any" value="{{ worst }}"></span>
+    <span class="field"><label for="cb-{{ prefix }}">Best</label>
+      <input id="cb-{{ prefix }}" name="best" type="number" inputmode="decimal" step="any" value="{{ best }}"></span>
+  </div>
+</fieldset>

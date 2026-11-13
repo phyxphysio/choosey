@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block main %}
+<section class="panel">
+  <p class="eyebrow">Read-only view</p>
+  <h1>{{ title }}</h1>
+  {% include "results.html" %}
+</section>
+
+{% if !rows.is_empty() && !headers.is_empty() %}
+<section class="panel">
+  <h2>All scores</h2>
+  <p class="muted small">Each cell shows the value entered and its 0-10 score.</p>
+  <div class="table-wrap" tabindex="0" role="region" aria-label="All scores">
+    <table>
+      <thead>
+        <tr><th scope="col">Option</th>{% for h in headers %}<th scope="col">{{ h }}</th>{% endfor %}</tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <th scope="row">{{ row.name }}{% if !row.notes.is_empty() %}<span class="notes">{{ row.notes }}</span>{% endif %}</th>
+          {% for (raw, score) in row.cells %}
+          <td>{% if raw.is_empty() %}<span class="muted">not scored</span>{% else %}{{ raw }} <span class="score">→ {{ score }}</span>{% endif %}</td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+<p><a class="button secondary" href="{{ export_href }}" hx-boost="false" download>Download CSV</a></p>
+{% endblock %}

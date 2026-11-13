@@ -19,6 +19,10 @@ infra/         Terraform (added separately)
 Rust is pinned to the stable channel by `rust-toolchain.toml`.
 
 ```sh
+STORE=memory cargo run -p choosey-web   # then open http://127.0.0.1:3000
+```
+
+```sh
 cargo fmt --all --check
 cargo clippy --all-targets -- -D warnings
 cargo test

@@ -11,3 +11,23 @@ name = "choosey"
 path = "src/main.rs"
 
 [dependencies]
+askama = "0.16.1"
+axum = "0.8.9"
+choosey-core = { path = "../core" }
+choosey-store = { path = "../store" }
+csv = "1.4.0"
+# Lambda Function URLs use the API Gateway HTTP (v2) payload format; nothing else is needed.
+lambda_http = { version = "1.3.2", default-features = false, features = ["apigw_http", "tracing"] }
+# Only the OS-backed generator (getrandom) is used, for ids and secrets.
+rand = { version = "0.10.3", default-features = false, features = ["std", "sys_rng"] }
+serde = { version = "1.0.229", features = ["derive"] }
+sha2 = "0.11.1"
+subtle = "2.6.1"
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "net", "signal"] }
+tower-http = { version = "0.7.1", features = ["limit"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+
+[dev-dependencies]
+http-body-util = "0.1.5"
+tower = { version = "0.5.3", features = ["util"] }

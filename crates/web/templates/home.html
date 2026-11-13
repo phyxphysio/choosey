@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Make a decision{% endblock %}
+{% block main %}
+{% if deleted %}
+<p class="notice" role="status">The decision was deleted.</p>
+{% endif %}
+{% if let Some(e) = error %}
+<p class="notice error" role="alert">{{ e }}</p>
+{% endif %}
+
+<section class="hero">
+  <h1>Stuck choosing? Weigh it up.</h1>
+  <p class="lead">{{ app }} is a weighted decision matrix. Say what matters and how much, score each option,
+    and get a ranked result with a breakdown of why.</p>
+</section>
+
+<section class="panel">
+  <h2>How it works</h2>
+  <ol class="how">
+    <li><strong>Criteria:</strong> list what matters (price, commute, light...) and how important each one is.
+      Not sure? Rank them and {{ app }} suggests weights.</li>
+    <li><strong>Options:</strong> add the things you're choosing between.</li>
+    <li><strong>Score:</strong> rate each option 0-10, or type real numbers like price or minutes and
+      {{ app }} scales them for you.</li>
+    <li><strong>Results:</strong> see the ranking, what drove it, and anything you haven't scored yet.</li>
+  </ol>
+</section>
+
+<section class="panel">
+  <h2>Start a decision</h2>
+  <form method="post" action="/d" class="stack">
+    <label for="title">What are you deciding? <span class="muted">(optional)</span></label>
+    <input id="title" name="title" type="text" maxlength="{{ limits.name }}" placeholder="e.g. Which flat?">
+    <fieldset class="templates">
+      <legend>Pick a starting point</legend>
+      {% for t in templates %}
+      <button class="template-card" type="submit" name="template" value="{{ t.id }}">
+        <span class="template-title">{{ t.title }}</span>
+        <span class="template-desc">{{ t.description }}</span>
+        {% if t.count > 0 %}<span class="muted">{{ t.count }} suggested criteria</span>{% endif %}
+      </button>
+      {% endfor %}
+    </fieldset>
+  </form>
+  <p class="muted">You'll get a private edit link. There are no accounts, so bookmark it.</p>
+</section>
+{% endblock %}

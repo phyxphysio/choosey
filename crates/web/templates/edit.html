@@ -1,0 +1,265 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block main %}
+{% if is_new %}
+<section class="notice important" role="status">
+  <h2>Bookmark this link. It's the only way back in.</h2>
+  <p>Anyone with this link can edit this decision. There are no accounts and no way to recover it.</p>
+  <label for="new-edit-url">Your edit link</label>
+  <input id="new-edit-url" class="copy" type="text" readonly value="{{ edit_url }}">
+</section>
+{% endif %}
+
+<h1 class="decision-title">{{ title }}</h1>
+
+<nav class="steps" aria-label="Steps">
+  <ol>
+    {% for s in steps %}
+    <li><a href="{{ s.href }}"{% if s.current %} aria-current="step"{% endif %}><span class="step-n">{{ s.n }}</span> {{ s.label }}</a></li>
+    {% endfor %}
+  </ol>
+</nav>
+
+{% if let Some(e) = error %}
+<p class="notice error" role="alert">{{ e }}</p>
+{% endif %}
+
+{# ------------------------------------------------------------------------------------------ #}
+{% if step == "criteria" %}
+<section class="panel">
+  <h2>What matters?</h2>
+  <p class="muted">List the things you care about, then say how important each one is (0 = ignore, 10 = crucial).
+    Scores can be a 0-10 rating, or a real number like price or minutes that {{ app }} scales for you.</p>
+
+  {% if criteria.is_empty() %}
+  <p>No criteria yet. Add your first one below.</p>
+  {% else %}
+
+  <p class="mode-switch">
+    {% if rank_mode %}
+    <a href="{{ base }}">Use sliders</a> · <strong>Rank instead</strong>
+    {% else %}
+    <strong>Sliders</strong> · <a href="{{ base }}?mode=rank">Rank instead</a>
+    {% endif %}
+  </p>
+
+  {% if rank_mode %}
+  {# Rank mode: order with up/down buttons (no drag and drop), tie by giving equal numbers. #}
+  <form id="rank" method="post" action="{{ base }}/rank" class="stack">
+    <p class="muted">Put the most important first. Give two criteria the same number to tie them. Then apply the
+      suggested weights and fine-tune with the sliders.</p>
+    <ol class="rank-list">
+      {% for c in criteria %}
+      <li class="rank-row">
+        <label class="visually-hidden" for="r-{{ c.id }}">Rank of {{ c.name }}</label>
+        <input id="r-{{ c.id }}" class="rank-input" name="r.{{ c.id }}" type="number" inputmode="numeric" min="1" max="{{ limits.criteria }}" value="{{ c.position }}">
+        <span class="rank-name">{{ c.name }} <span class="muted">(weight {{ c.weight }})</span></span>
+        <span class="rank-buttons">
+          <button type="submit" class="icon" formaction="{{ base }}/criteria/{{ c.id }}/up" {% if c.is_first %}disabled{% endif %} aria-label="Move {{ c.name }} up">↑</button>
+          <button type="submit" class="icon" formaction="{{ base }}/criteria/{{ c.id }}/down" {% if c.is_last %}disabled{% endif %} aria-label="Move {{ c.name }} down">↓</button>
+        </span>
+      </li>
+      {% endfor %}
+    </ol>
+    <button type="submit">Apply suggested weights</button>
+  </form>
+  {% else %}
+  {# Sliders. With JS, htmx saves on every change and re-renders the form so the numbers update. #}
+  <form id="weights" method="post" action="{{ base }}/weights" class="stack"
+        hx-post="{{ base }}/weights" hx-trigger="change, submit" hx-target="#weights" hx-select="#weights" hx-swap="outerHTML">
+    {% for c in criteria %}
+    <div class="slider-row">
+      <label for="w-{{ c.id }}">{{ c.name }}</label>
+      <input id="w-{{ c.id }}" name="w.{{ c.id }}" type="range" min="0" max="10" step="1" value="{{ c.weight }}">
+      <output for="w-{{ c.id }}">{{ c.weight }}</output>
+    </div>
+    {% endfor %}
+    <button type="submit">Save weights</button>
+  </form>
+  {% endif %}
+  {% endif %}
+</section>
+
+{% if !criteria.is_empty() %}
+<section class="panel">
+  <h2>Edit criteria</h2>
+  {% for c in criteria %}
+  <details class="item">
+    <summary><span class="item-name">{{ c.name }}</span> <span class="muted">{{ c.kind_label }}{% if !c.unit.is_empty() %}, {{ c.unit }}{% endif %}</span></summary>
+    {% if c.minmax_hint %}
+    <p class="hint">Without bounds, the best option gets 10 and the worst gets 0, which can make small differences look big.
+      Set a worst and best value for fairer scaling.</p>
+    {% endif %}
+    <form method="post" action="{{ base }}/criteria/{{ c.id }}" class="stack">
+      {% let prefix = c.id.as_str() %}
+      {% let name = c.name.as_str() %}
+      {% let kind = c.kind.as_str() %}
+      {% let unit = c.unit.as_str() %}
+      {% let worst = c.worst.as_str() %}
+      {% let best = c.best.as_str() %}
+      {% include "criterion_fields.html" %}
+      <div class="row">
+        <button type="submit">Save</button>
+        <button type="submit" class="danger" formaction="{{ base }}/criteria/{{ c.id }}/delete">Delete</button>
+      </div>
+    </form>
+  </details>
+  {% endfor %}
+</section>
+{% endif %}
+
+<section class="panel">
+  <h2>Add a criterion</h2>
+  {% if can_add_criterion %}
+  <form method="post" action="{{ base }}/criteria" class="stack">
+    {% let prefix = "new" %}
+    {% let name = "" %}
+    {% let kind = "rated" %}
+    {% let unit = "" %}
+    {% let worst = "" %}
+    {% let best = "" %}
+    {% include "criterion_fields.html" %}
+    <button type="submit">Add criterion</button>
+  </form>
+  {% else %}
+  <p class="muted">You've reached the limit of {{ limits.criteria }} criteria.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Decision name</h2>
+  <form method="post" action="{{ base }}/title" class="row">
+    <label class="visually-hidden" for="decision-title">Decision name</label>
+    <input id="decision-title" name="title" type="text" required maxlength="{{ limits.name }}" value="{{ title }}">
+    <button type="submit">Rename</button>
+  </form>
+</section>
+{% endif %}
+
+{# ------------------------------------------------------------------------------------------ #}
+{% if step == "options" %}
+<section class="panel">
+  <h2>What are you choosing between?</h2>
+  <p class="muted">Add each option: a flat, a town, a job offer. Notes are just for you.</p>
+  {% if options.is_empty() %}<p>No options yet. Add your first one below.</p>{% endif %}
+  {% for o in options %}
+  <details class="item">
+    <summary><span class="item-name">{{ o.name }}</span>{% if !o.notes.is_empty() %} <span class="muted">has notes</span>{% endif %}</summary>
+    <form method="post" action="{{ base }}/options/{{ o.id }}" class="stack">
+      <label for="on-{{ o.id }}">Name</label>
+      <input id="on-{{ o.id }}" name="name" type="text" required maxlength="{{ limits.name }}" value="{{ o.name }}">
+      <label for="nt-{{ o.id }}">Notes</label>
+      <textarea id="nt-{{ o.id }}" name="notes" rows="3" maxlength="{{ limits.notes }}">{{ o.notes }}</textarea>
+      <div class="row">
+        <button type="submit">Save</button>
+        <button type="submit" class="danger" formaction="{{ base }}/options/{{ o.id }}/delete">Delete</button>
+      </div>
+    </form>
+  </details>
+  {% endfor %}
+</section>
+
+<section class="panel">
+  <h2>Add an option</h2>
+  {% if can_add_option %}
+  <form method="post" action="{{ base }}/options" class="stack">
+    <label for="new-option-name">Name</label>
+    <input id="new-option-name" name="name" type="text" required maxlength="{{ limits.name }}" placeholder="e.g. 12 Elm Street">
+    <label for="new-option-notes">Notes <span class="muted">(optional)</span></label>
+    <textarea id="new-option-notes" name="notes" rows="2" maxlength="{{ limits.notes }}"></textarea>
+    <button type="submit">Add option</button>
+  </form>
+  {% else %}
+  <p class="muted">You've reached the limit of {{ limits.options }} options.</p>
+  {% endif %}
+</section>
+{% endif %}
+
+{# ------------------------------------------------------------------------------------------ #}
+{% if step == "score" %}
+<div class="score-layout">
+<section class="panel">
+  <h2>Score each option</h2>
+  {% if score_cards.is_empty() || criteria.is_empty() %}
+  <p>Add some criteria and options first.</p>
+  {% else %}
+  <p class="muted">Ratings go from 0 to 10 (half steps are fine). For numbers, type the real value. Leave a box empty if
+    you don't know yet: it won't count as zero.</p>
+
+  {% if let Some(nav) = score_nav %}
+  {# On small screens only one option is shown at a time; these links move between them. #}
+  <nav class="score-nav" aria-label="Options">
+    {% if let Some(p) = nav.prev %}<a href="{{ p }}">← Previous</a>{% else %}<span></span>{% endif %}
+    <span>Option {{ nav.index }} of {{ nav.count }}</span>
+    {% if let Some(n) = nav.next %}<a href="{{ n }}">Next →</a>{% else %}<span></span>{% endif %}
+  </nav>
+  {% endif %}
+
+  {# With JS, every change is saved and the live results panel is refreshed. #}
+  <form id="scores" method="post" action="{{ base }}/scores"
+        hx-post="{{ base }}/scores" hx-trigger="change, submit" hx-target="#live-results" hx-select="#live-results" hx-swap="outerHTML">
+    <input type="hidden" name="option" value="{{ current_option }}">
+    <div class="score-grid">
+      {% for card in score_cards %}
+      <fieldset class="score-card{% if card.current %} is-current{% endif %}">
+        <legend>{{ card.option_name }}</legend>
+        {% for cell in card.cells %}
+        <div class="score-cell">
+          <label for="{{ cell.input_id }}">{{ cell.criterion_name }} <span class="muted small">{{ cell.hint }}</span></label>
+          {% if cell.rated %}
+          <input id="{{ cell.input_id }}" name="{{ cell.field }}" type="number" inputmode="decimal" min="0" max="10" step="0.5" value="{{ cell.value }}">
+          {% else %}
+          <input id="{{ cell.input_id }}" name="{{ cell.field }}" type="number" inputmode="decimal" step="any" value="{{ cell.value }}">
+          {% endif %}
+        </div>
+        {% endfor %}
+      </fieldset>
+      {% endfor %}
+    </div>
+    <button type="submit">Save scores</button>
+  </form>
+  {% endif %}
+</section>
+
+<aside class="panel live" aria-label="Live results">
+  <h2>Results so far</h2>
+  <div id="live-results" aria-live="polite">
+    {% include "results.html" %}
+  </div>
+</aside>
+</div>
+{% endif %}
+
+{# ------------------------------------------------------------------------------------------ #}
+{% if step == "results" %}
+<section class="panel">
+  <h2>Results</h2>
+  {% include "results.html" %}
+</section>
+
+<section class="panel">
+  <h2>Share</h2>
+  <label for="view-url">View-only link: safe to share, nobody can change anything with it</label>
+  <input id="view-url" class="copy" type="text" readonly value="{{ view_url }}">
+  <label for="edit-url">Your edit link: keep it private</label>
+  <input id="edit-url" class="copy" type="text" readonly value="{{ edit_url }}">
+  <p><a class="button secondary" href="{{ export_href }}" hx-boost="false" download>Download CSV</a></p>
+</section>
+
+<section class="panel danger-zone">
+  <h2>Delete</h2>
+  <details>
+    <summary>Delete this decision…</summary>
+    <form method="post" action="{{ base }}/delete" class="stack">
+      <p>This permanently deletes the decision for everyone with either link. It can't be undone.</p>
+      <label class="check"><input type="checkbox" name="confirm" value="yes" required> Yes, delete it permanently</label>
+      <button type="submit" class="danger">Delete decision</button>
+    </form>
+  </details>
+</section>
+{% endif %}
+
+{% if let Some(n) = next_step %}
+<p class="next"><a class="button" href="{{ n.href }}">Next: {{ n.label }} →</a></p>
+{% endif %}
+{% endblock %}
