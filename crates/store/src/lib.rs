@@ -1,10 +1,12 @@
 //! Persistence for Choosey decisions.
 //!
 //! [`Store`] is the interface the web app uses. [`MemoryStore`] keeps everything in a `HashMap`
-//! (local development and tests).
+//! (local development and tests); [`DynamoStore`] uses one DynamoDB item per decision.
 
+mod dynamo;
 mod memory;
 
+pub use dynamo::DynamoStore;
 pub use memory::MemoryStore;
 
 use async_trait::async_trait;

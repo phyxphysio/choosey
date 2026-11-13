@@ -6,7 +6,12 @@ publish.workspace = true
 
 [dependencies]
 async-trait = "0.1.92"
+# Default HTTPS client is hyper 1 + rustls (no OpenSSL). SSO and credential_process aren't needed:
+# Lambda supplies credentials through the environment.
+aws-config = { version = "1.13.2", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
+aws-sdk-dynamodb = { version = "1.139.0", default-features = false, features = ["default-https-client", "rt-tokio"] }
 choosey-core = { path = "../core" }
+serde_dynamo = { version = "4.3.0", features = ["aws-sdk-dynamodb+1"] }
 thiserror = "2.0.21"
 
 [dev-dependencies]

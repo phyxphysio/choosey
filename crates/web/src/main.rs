@@ -6,7 +6,7 @@
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use choosey_store::{MemoryStore, Store};
+use choosey_store::{DynamoStore, MemoryStore, Store};
 use choosey_web::app::{AppState, router};
 use choosey_web::config::{Config, StoreKind};
 use tracing_subscriber::EnvFilter;
@@ -30,9 +30,10 @@ async fn main() -> ExitCode {
 
     let store: Arc<dyn Store> = match &config.store {
         StoreKind::Memory => Arc::new(MemoryStore::new()),
-        StoreKind::Dynamo { .. } => {
-            tracing::error!("STORE=dynamo is not available in this build");
-            return ExitCode::FAILURE;
+        // Region and credentials come from the standard AWS environment. Nothing is called at
+        // startup: the Lambda role only allows GetItem, PutItem and DeleteItem.
+        StoreKind::Dynamo { table_name } => {
+            Arc::new(DynamoStore::from_env(table_name.clone()).await)
         }
     };
 

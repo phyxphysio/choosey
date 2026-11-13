@@ -27,6 +27,25 @@ jobs:
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
 
+  dynamo-local:
+    name: DynamoStore against DynamoDB Local
+    runs-on: ubuntu-latest
+    services:
+      dynamodb:
+        # Pinned by digest; Dependabot doesn't track service images, so bump this by hand.
+        image: amazon/dynamodb-local@sha256:6ada631ec7aa5fc83446855eb17233e3dad184fec47477e8140c6c569cfe0c86
+        ports:
+          - 8000:8000
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo test --locked -p choosey-store --test dynamo_local -- --ignored
+        env:
+          DYNAMODB_ENDPOINT: http://localhost:8000
+
   deny:
     name: cargo deny
     runs-on: ubuntu-latest
@@ -63,7 +82,7 @@ jobs:
 
   deploy:
     name: deploy to Lambda
-    needs: [rust, deny, terraform]
+    needs: [rust, dynamo-local, deny, terraform]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production
