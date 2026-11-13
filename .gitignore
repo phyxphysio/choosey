@@ -1,0 +1,21 @@
+# Owner's private notes: never commit.
+NOTES.md
+
+# Rust build output
+target/
+
+# Terraform state, plugins and variable files (may contain secrets)
+*.tfstate*
+.terraform/
+*.tfvars
+!*.tfvars.example
+
+# Local env files and build artefacts
+.env*
+*.zip
+
+# Spreadsheets/CSV exports may contain real data. Fixtures (made-up names only) are allowed.
+*.csv
+!**/fixtures/**/*.csv
+
+.DS_Store
