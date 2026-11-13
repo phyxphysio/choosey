@@ -16,10 +16,14 @@ variable "aws_region" {
   default     = "ap-southeast-2"
 }
 
-variable "github_repo" {
-  description = "owner/name of the repo allowed to deploy via OIDC."
+variable "github_oidc_subject_prefix" {
+  description = <<-EOT
+    The repo's OIDC `sub` prefix. This repo uses GitHub's immutable subject format, which embeds
+    the owner and repo IDs so a renamed or re-created repo with the same name can't deploy.
+    Check with: gh api repos/<owner>/<repo>/actions/oidc/customization/sub
+  EOT
   type        = string
-  default     = "phyxphysio/choosey"
+  default     = "repo:phyxphysio@64931554/choosey@1457136940"
 }
 
 variable "budget_alert_email" {

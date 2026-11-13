@@ -60,7 +60,7 @@ gh variable set AWS_DEPLOY_ROLE_ARN --body "$(terraform output -raw deploy_role_
 gh variable set AWS_REGION --body "$(terraform output -raw aws_region)"
 gh variable set LAMBDA_FUNCTION_NAME --body "$(terraform output -raw lambda_function_name)"
 ```
-The deploy role only trusts `repo:phyxphysio/choosey:environment:production`, and that
+The deploy role only trusts the repo's immutable OIDC subject (`repo:phyxphysio@<owner-id>/choosey@<repo-id>:environment:production`), and that
 environment only accepts deployments from `main`.
 
 ## Not included (cost)
