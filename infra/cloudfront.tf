@@ -16,11 +16,17 @@ data "aws_cloudfront_origin_request_policy" "all_except_host" {
   name = "Managed-AllViewerExceptHostHeader"
 }
 
-# Redirect www.<domain> to the apex so there's one canonical origin.
-resource "aws_cloudfront_function" "www_redirect" {
-  name    = "${var.app_name}-www-redirect"
+# Runs at the edge on every request, before anything reaches Lambda:
+# 1. www.<domain> -> 301 to the apex, so there's one canonical origin.
+# 2. Anything that isn't one of the app's routes gets a 404 right here. Scanners probing
+#    for /.env, /wp-admin etc. then never invoke Lambda, so they can't use up its small
+#    reserved concurrency and get real users throttled.
+#    Keep this list in sync with the routes in crates/web/src/app.rs.
+resource "aws_cloudfront_function" "viewer_request" {
+  name    = "${var.app_name}-viewer-request"
   runtime = "cloudfront-js-2.0"
   publish = true
+  comment = "www redirect + edge 404 for non-app paths"
   code    = <<-JS
     function handler(event) {
       var req = event.request;
@@ -32,9 +38,33 @@ resource "aws_cloudfront_function" "www_redirect" {
           headers: { location: { value: "https://${var.domain}" + req.uri } }
         };
       }
-      return req;
+      var uri = req.uri;
+      if (uri === "/" || uri === "/d" || uri.indexOf("/d/") === 0 || uri.indexOf("/static/") === 0) {
+        return req;
+      }
+      return {
+        statusCode: 404,
+        statusDescription: "Not Found",
+        headers: {
+          "content-type": { value: "text/plain; charset=utf-8" },
+          "cache-control": { value: "no-store" },
+          "x-content-type-options": { value: "nosniff" }
+        },
+        body: { encoding: "text", data: "Not found" }
+      };
     }
   JS
+
+  # The distribution references this function, so the new one must exist before the old
+  # one can be deleted.
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+moved {
+  from = aws_cloudfront_function.www_redirect
+  to   = aws_cloudfront_function.viewer_request
 }
 
 # Defence in depth: the app sets these too; override=false keeps the app's values.
@@ -107,7 +137,7 @@ resource "aws_cloudfront_distribution" "app" {
 
     function_association {
       event_type   = "viewer-request"
-      function_arn = aws_cloudfront_function.www_redirect.arn
+      function_arn = aws_cloudfront_function.viewer_request.arn
     }
   }
 
@@ -124,7 +154,7 @@ resource "aws_cloudfront_distribution" "app" {
 
     function_association {
       event_type   = "viewer-request"
-      function_arn = aws_cloudfront_function.www_redirect.arn
+      function_arn = aws_cloudfront_function.viewer_request.arn
     }
   }
 
