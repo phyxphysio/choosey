@@ -482,3 +482,77 @@ async fn unknown_template_is_rejected() {
     let res = post(&app(), "/d", "template=nope").await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+/// Regression test: a name typed into the Add box and then "Next" pressed (instead of "Add") used
+/// to be silently discarded, because "Next" was a plain link. It now submits the Add form.
+#[tokio::test]
+async fn next_keeps_a_typed_but_unadded_item() {
+    let app = app();
+    let edit = create(&app, "template=blank").await;
+
+    // Both pages render "Next" as a submit button for their Add form, not a link.
+    let criteria_page = body(get(&app, &edit).await).await;
+    assert!(criteria_page.contains(r#"form="add-criterion" name="then" value="next""#));
+    let options_page = body(get(&app, &format!("{edit}/options")).await).await;
+    assert!(options_page.contains(r#"form="add-option" name="then" value="next""#));
+    assert_csp_clean(&options_page);
+
+    // Criteria: Next with a name typed adds it, then moves on to Options.
+    let res = post(
+        &app,
+        &format!("{edit}/criteria"),
+        "then=next&name=Access+to+surf&kind=rated",
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    assert!(location(&res).ends_with("/options"));
+    assert!(
+        body(get(&app, &edit).await)
+            .await
+            .contains("Access to surf")
+    );
+
+    // Options: Next with a name typed adds it, then moves on to Score.
+    post(&app, &format!("{edit}/options"), "name=Dunedin&notes=").await;
+    let res = post(
+        &app,
+        &format!("{edit}/options"),
+        "then=next&name=Manly&notes=",
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    assert!(location(&res).ends_with("/score"));
+    let options_page = body(get(&app, &format!("{edit}/options")).await).await;
+    assert!(options_page.contains("Dunedin") && options_page.contains("Manly"));
+
+    // Next with an empty Add box just moves on and changes nothing.
+    let criteria_before = body(get(&app, &edit).await).await;
+    let res = post(&app, &format!("{edit}/options"), "then=next&name=&notes=").await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    assert!(location(&res).ends_with("/score"));
+    let res = post(
+        &app,
+        &format!("{edit}/criteria"),
+        "then=next&name=+&kind=rated",
+    )
+    .await;
+    assert!(location(&res).ends_with("/options"));
+    let options_page = body(get(&app, &format!("{edit}/options")).await).await;
+    assert_eq!(options_page.matches(r#"<details class="item">"#).count(), 2);
+    assert_eq!(body(get(&app, &edit).await).await, criteria_before);
+
+    // Next with invalid input stays on the page and shows the error, so nothing is lost.
+    let res = post(
+        &app,
+        &format!("{edit}/options"),
+        "then=next&name=&notes=Cheap+but+cold",
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(body(res).await.contains("be empty"));
+
+    // A wrong secret still gets the same 404 as everywhere else, even for an empty Next.
+    let bad = format!("{}/edit/{}", view_path(&edit), "A".repeat(22));
+    let res = post(&app, &format!("{bad}/options"), "then=next&name=&notes=").await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}

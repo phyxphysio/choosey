@@ -112,8 +112,21 @@ fn edit_page(
 /// overwrite each other: the loser gets a "changed elsewhere" page.
 async fn mutate(
     state: &AppState,
+    ids: (&str, &str),
+    step: Step,
+    redirect_query: &str,
+    change: impl FnOnce(&mut Decision) -> Result<(), InvalidInput>,
+) -> Result<Response> {
+    mutate_then(state, ids, step, step, redirect_query, change).await
+}
+
+/// Like [`mutate`], but on success redirects to `redirect_step` instead of back to `step`.
+/// Errors still re-show `step`, the page the form was on, so the user can fix their input.
+async fn mutate_then(
+    state: &AppState,
     (view_id, secret): (&str, &str),
     step: Step,
+    redirect_step: Step,
     redirect_query: &str,
     change: impl FnOnce(&mut Decision) -> Result<(), InvalidInput>,
 ) -> Result<Response> {
@@ -128,8 +141,25 @@ async fn mutate(
     }
     let expected = d.bump_version(now());
     state.store.put(&d, expected).await?;
-    let to = format!("{}{redirect_query}", edit_path(view_id, secret, step));
+    let to = format!(
+        "{}{redirect_query}",
+        edit_path(view_id, secret, redirect_step)
+    );
     Ok(Redirect::to(&to).into_response())
+}
+
+/// Value of the `then` field sent by the page's "Next" button.
+///
+/// On the Criteria and Options pages, "Next" is a submit button for the "Add" form (linked with
+/// the HTML `form` attribute) rather than a plain link. That way, a name typed into the Add box
+/// but not yet added isn't silently thrown away when the user moves on: it's added first. If
+/// the Add box is empty, "Next" just goes to the next step.
+const THEN_NEXT: &str = "next";
+
+/// Redirect to `step` after checking the edit secret, like every other edit route does.
+async fn go_to(state: &AppState, (view_id, secret): (&str, &str), step: Step) -> Result<Response> {
+    load_edit(state, view_id, secret).await?;
+    Ok(Redirect::to(&edit_path(view_id, secret, step)).into_response())
 }
 
 fn invalid(msg: &str) -> InvalidInput {
@@ -334,6 +364,9 @@ pub async fn delete_decision(
 
 #[derive(Debug, Deserialize)]
 pub struct CriterionForm {
+    /// [`THEN_NEXT`] when sent by the "Next" button; empty for "Add".
+    #[serde(default)]
+    then: String,
     #[serde(default)]
     name: String,
     #[serde(default)]
@@ -393,7 +426,15 @@ pub async fn add_criterion(
     Path((v, k)): EditPath,
     Form(f): Form<CriterionForm>,
 ) -> Result<Response> {
-    mutate(&s, (&v, &k), Step::Criteria, "", |d| {
+    let next = f.then == THEN_NEXT;
+    let typed_nothing = [&f.name, &f.unit, &f.worst, &f.best]
+        .iter()
+        .all(|field| field.trim().is_empty());
+    if next && typed_nothing {
+        return go_to(&s, (&v, &k), Step::Options).await;
+    }
+    let redirect = if next { Step::Options } else { Step::Criteria };
+    mutate_then(&s, (&v, &k), Step::Criteria, redirect, "", |d| {
         if d.criteria.len() >= MAX_CRITERIA {
             return Err(invalid("You've reached the maximum number of criteria."));
         }
@@ -522,6 +563,9 @@ pub async fn apply_rank(
 
 #[derive(Debug, Deserialize)]
 pub struct OptionForm {
+    /// [`THEN_NEXT`] when sent by the "Next" button; empty for "Add".
+    #[serde(default)]
+    then: String,
     #[serde(default)]
     name: String,
     #[serde(default)]
@@ -534,7 +578,12 @@ pub async fn add_option(
     Path((v, k)): EditPath,
     Form(f): Form<OptionForm>,
 ) -> Result<Response> {
-    mutate(&s, (&v, &k), Step::Options, "", |d| {
+    let next = f.then == THEN_NEXT;
+    if next && f.name.trim().is_empty() && f.notes.trim().is_empty() {
+        return go_to(&s, (&v, &k), Step::Score).await;
+    }
+    let redirect = if next { Step::Score } else { Step::Options };
+    mutate_then(&s, (&v, &k), Step::Options, redirect, "", |d| {
         if d.options.len() >= MAX_OPTIONS {
             return Err(invalid("You've reached the maximum number of options."));
         }

@@ -111,7 +111,7 @@
 <section class="panel">
   <h2>Add a criterion</h2>
   {% if can_add_criterion %}
-  <form method="post" action="{{ base }}/criteria" class="stack">
+  <form id="add-criterion" method="post" action="{{ base }}/criteria" class="stack">
     {% let prefix = "new" %}
     {% let name = "" %}
     {% let kind = "rated" %}
@@ -162,7 +162,7 @@
 <section class="panel">
   <h2>Add an option</h2>
   {% if can_add_option %}
-  <form method="post" action="{{ base }}/options" class="stack">
+  <form id="add-option" method="post" action="{{ base }}/options" class="stack">
     <label for="new-option-name">Name</label>
     <input id="new-option-name" name="name" type="text" required maxlength="{{ limits.name }}" placeholder="e.g. 12 Elm Street">
     <label for="new-option-notes">Notes <span class="muted">(optional)</span></label>
@@ -260,6 +260,17 @@
 {% endif %}
 
 {% if let Some(n) = next_step %}
-<p class="next"><a class="button" href="{{ n.href }}">Next: {{ n.label }} →</a></p>
+{#- On Criteria and Options, "Next" submits the Add form (see THEN_NEXT in handlers.rs) so
+    anything typed but not yet added is kept. `formnovalidate` lets it through when the Add box
+    is empty; the server then just moves on. -#}
+<p class="next">
+{%- if step == "criteria" && can_add_criterion %}
+  <button type="submit" class="button" form="add-criterion" name="then" value="next" formnovalidate>Next: {{ n.label }} →</button>
+{%- else if step == "options" && can_add_option %}
+  <button type="submit" class="button" form="add-option" name="then" value="next" formnovalidate>Next: {{ n.label }} →</button>
+{%- else %}
+  <a class="button" href="{{ n.href }}">Next: {{ n.label }} →</a>
+{%- endif %}
+</p>
 {% endif %}
 {% endblock %}
