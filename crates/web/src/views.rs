@@ -376,7 +376,8 @@ pub struct ScoreCell {
     pub value: String,
 }
 
-/// Previous/next links for the one-option-at-a-time score view on small screens.
+/// Previous/next buttons for the one-option-at-a-time score view on small screens. They submit
+/// the scores form (so nothing typed is lost) with `go` set to one of these option ids.
 pub struct ScoreNav {
     pub index: usize,
     pub count: usize,
@@ -533,12 +534,12 @@ impl EditPage {
             .get(current_index)
             .map(|o| o.id.clone())
             .unwrap_or_default();
-        let score_href = |i: usize| format!("{base}/score?option={}", d.options[i].id);
+        let option_id = |i: usize| d.options[i].id.clone();
         let score_nav = (!d.options.is_empty()).then(|| ScoreNav {
             index: current_index + 1,
             count: d.options.len(),
-            prev: current_index.checked_sub(1).map(score_href),
-            next: (current_index + 1 < d.options.len()).then(|| score_href(current_index + 1)),
+            prev: current_index.checked_sub(1).map(option_id),
+            next: (current_index + 1 < d.options.len()).then(|| option_id(current_index + 1)),
         });
 
         // Look the id up on this step's list, so the name shown is the stored (cleaned) one and an

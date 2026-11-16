@@ -845,3 +845,87 @@ async fn add_returns_focus_to_the_add_box() {
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     assert!(!body(res).await.contains("Added "));
 }
+
+/// Regression test: on phones the Score step shows one option at a time, and its Previous/Next
+/// were plain links, so scores typed with JavaScript off were lost. They now submit the form.
+#[tokio::test]
+async fn score_previous_next_save_before_moving() {
+    let app = app();
+    let edit = create(&app, "template=blank").await;
+    post(&app, &format!("{edit}/criteria"), "name=Sun&kind=rated").await; // c1
+    for name in ["A", "B", "C"] {
+        post(&app, &format!("{edit}/options"), &format!("name={name}")).await; // o2, o3, o4
+    }
+
+    // The middle option has both buttons; each submits the scores form with its target in `go`.
+    let page = body(get(&app, &format!("{edit}/score?option=o3")).await).await;
+    assert_csp_clean(&page);
+    assert!(page.contains("Option 2 of 3"));
+    let prev = r#"<button type="submit" class="secondary" form="scores" name="go" value="o2""#;
+    let next = r#"<button type="submit" class="secondary" form="scores" name="go" value="o4""#;
+    assert!(page.contains(prev) && page.contains(next));
+    assert!(!page.contains("score?option="), "no plain links any more");
+    // With JS they post the form themselves and swap the whole page, outside the <form> so they
+    // don't inherit its live-results target, waiting for any auto-save in flight.
+    let at = page.find(next).unwrap();
+    let tag = &page[at..at + page[at..].find('>').unwrap()];
+    for attr in [
+        format!(r#"hx-post="{edit}/scores""#),
+        r#"hx-target="body""#.to_string(),
+        r#"hx-push-url="true""#.to_string(),
+        r##"hx-sync="#scores:queue last""##.to_string(),
+    ] {
+        assert!(tag.contains(&attr), "{attr} in {tag}");
+    }
+    let form = page.find(r#"<form id="scores""#).unwrap();
+    assert!(at < form, "nav buttons live outside the form");
+    // Enter in a score box must save, not jump: the first submit button for the form is a
+    // plain save button, ahead of Previous/Next.
+    let default = page
+        .find(r#"<button type="submit" form="scores" class="visually-hidden""#)
+        .unwrap();
+    assert!(default < page.find(prev).unwrap());
+
+    // No-JS "Next": the typed score is saved, then the next option is shown.
+    let res = post(
+        &app,
+        &format!("{edit}/scores"),
+        "option=o3&s.o3.c1=7.5&go=o4",
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    assert_eq!(location(&res), format!("{edit}/score?option=o4"));
+    let page = body(get(&app, &location(&res)).await).await;
+    assert!(page.contains("Option 3 of 3"));
+    assert!(page.contains(r#"name="s.o3.c1" type="number" inputmode="decimal" min="0" max="10" step="0.5" value="7.5""#));
+
+    // "Previous" works the same way.
+    let res = post(&app, &format!("{edit}/scores"), "option=o4&s.o4.c1=2&go=o3").await;
+    assert_eq!(location(&res), format!("{edit}/score?option=o3"));
+
+    // An unknown or malicious target falls back to the first option.
+    for go in ["o999", "c1", "%2F%2Fevil.example", ""] {
+        let res = post(
+            &app,
+            &format!("{edit}/scores"),
+            &format!("option=o3&go={go}"),
+        )
+        .await;
+        assert_eq!(location(&res), format!("{edit}/score?option=o2"), "{go}");
+    }
+
+    // An invalid score isn't saved and the error is shown on the option being edited.
+    let res = post(
+        &app,
+        &format!("{edit}/scores"),
+        "option=o4&s.o4.c1=11&go=o2",
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let html = body(res).await;
+    assert!(html.contains("Option 3 of 3") && html.contains(r#"role="alert""#));
+
+    // Without `go` ("Save scores" or htmx's auto-save) it stays on the current option.
+    let res = post(&app, &format!("{edit}/scores"), "option=o4&s.o4.c1=3").await;
+    assert_eq!(location(&res), format!("{edit}/score?option=o4"));
+}

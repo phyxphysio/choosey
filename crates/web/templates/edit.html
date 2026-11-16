@@ -198,11 +198,37 @@
     you don't know yet: it won't count as zero.</p>
 
   {% if let Some(nav) = score_nav %}
-  {# On small screens only one option is shown at a time; these links move between them. #}
+  {#- On small screens only one option is shown at a time; these buttons move between them.
+
+      They are submit buttons of the scores form (linked with `form="scores"`), sending
+      `go` = the option to show, so scores typed without JavaScript are saved before moving
+      (see save_scores in handlers.rs, which redirects to /score?option=<go>).
+
+      With JavaScript, they must navigate rather than just refresh the results panel. The form's
+      own hx-post (trigger "change, submit") swaps only #live-results, so a plain submit would save
+      but stay on the same option. Instead each button has its own hx-post: htmx then handles the
+      click on the button, cancels the native submit (so the form's handler never fires), sends
+      the form's fields plus the button's `go`, and swaps the whole page like boosted navigation
+      (target body, push the redirected URL, scroll to the top). Living outside the <form> keeps
+      them from inheriting its hx-target/hx-select. hx-sync waits for any auto-save the form
+      already has in flight (blurring a box fires "change" just before the click), so the two
+      writes can't race and hit the "changed elsewhere" conflict. -#}
+  {#- Pressing Enter in a score box "clicks" the form's default button: the first submit button
+      for the form in page order. Previous/Next come before the form, so without this they'd be
+      the default and Enter would jump to another option. This one comes first and just saves,
+      like "Save scores". It's rendered (not display:none) so every browser uses it, but it's
+      off-screen, out of the tab order and hidden from screen readers. -#}
+  <button type="submit" form="scores" class="visually-hidden" tabindex="-1" aria-hidden="true">Save scores</button>
   <nav class="score-nav" aria-label="Options">
-    {% if let Some(p) = nav.prev %}<a href="{{ p }}">← Previous</a>{% else %}<span></span>{% endif %}
+    {% if let Some(p) = nav.prev -%}
+    <button type="submit" class="secondary" form="scores" name="go" value="{{ p }}"
+            hx-post="{{ base }}/scores" hx-target="body" hx-swap="innerHTML show:window:top" hx-push-url="true" hx-sync="#scores:queue last">← Previous</button>
+    {%- else %}<span></span>{% endif %}
     <span>Option {{ nav.index }} of {{ nav.count }}</span>
-    {% if let Some(n) = nav.next %}<a href="{{ n }}">Next →</a>{% else %}<span></span>{% endif %}
+    {% if let Some(n) = nav.next -%}
+    <button type="submit" class="secondary" form="scores" name="go" value="{{ n }}"
+            hx-post="{{ base }}/scores" hx-target="body" hx-swap="innerHTML show:window:top" hx-push-url="true" hx-sync="#scores:queue last">Next →</button>
+    {%- else %}<span></span>{% endif %}
   </nav>
   {% endif %}
 

@@ -688,22 +688,36 @@ pub async fn delete_option(
 
 /// `POST .../scores`: fields `s.{option_id}.{criterion_id}` = value (empty clears it), plus
 /// `option` = the option shown on small screens, so the redirect returns to it.
+///
+/// On small screens the Score step shows one option at a time. Its "← Previous" and "Next →"
+/// buttons submit this same form with `go` = the option to show next, so scores typed without
+/// JavaScript are saved before moving (they used to be plain links, which dropped them). `go` is
+/// checked against the decision's options; an unknown id falls back to the first option.
 pub async fn save_scores(
     State(s): State<AppState>,
     Path((v, k)): EditPath,
     Form(pairs): Pairs,
 ) -> Result<Response> {
+    let field = |name: &str| {
+        pairs
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, v)| v.as_str())
+    };
     // Only echo back an option id that looks like one of ours (`o` + digits).
-    let option = pairs
-        .iter()
-        .find(|(key, _)| key == "option")
-        .map(|(_, v)| v.as_str())
+    let option = field("option")
         .filter(|v| {
             v.len() <= 8 && v.starts_with('o') && v[1..].bytes().all(|b| b.is_ascii_digit())
-        });
-    let query = option.map(|o| format!("?option={o}")).unwrap_or_default();
+        })
+        .map(str::to_string);
+    let go = field("go").map(str::to_string);
+    // If a score is invalid, show the error on the option the user was looking at.
+    let on_error = EditQuery {
+        option: option.clone(),
+        ..Default::default()
+    };
 
-    mutate(&s, (&v, &k), Step::Score, &query, |d| {
+    mutate_with(&s, (&v, &k), Step::Score, on_error, |d| {
         for (key, value) in &pairs {
             let Some((oid, cid)) = key.strip_prefix("s.").and_then(|rest| rest.split_once('.'))
             else {
@@ -729,7 +743,19 @@ pub async fn save_scores(
                 }
             }
         }
-        Ok(())
+        // Previous/Next: the requested option if it's one of ours, else the first. Otherwise
+        // ("Save scores", or htmx's auto-save) stay on the option that was shown.
+        let show = match go {
+            Some(go) => d
+                .options
+                .iter()
+                .find(|o| o.id == go)
+                .or(d.options.first())
+                .map(|o| o.id.clone()),
+            None => option,
+        };
+        let query = show.map(|o| format!("?option={o}")).unwrap_or_default();
+        Ok((Step::Score, query))
     })
     .await
 }
