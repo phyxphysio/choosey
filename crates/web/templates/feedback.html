@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Feedback{% endblock %}
+{% block main %}
+<section class="panel">
+  <h1>Send feedback</h1>
+  {% if sent %}
+  <p class="notice" role="status">Thanks! Your feedback has been sent.</p>
+  <p><a class="button" href="/">Back to {{ app }}</a></p>
+  {% else %}
+  <p class="muted">Something confusing, broken or missing? Ideas are welcome too. This goes straight
+    to the person who made {{ app }}. Please don't paste your decision's edit link.</p>
+  {% if let Some(e) = error %}<p class="notice error" role="alert">{{ e }}</p>{% endif %}
+  <form method="post" action="/feedback" class="stack">
+    <label for="fb-message">Your feedback</label>
+    <textarea id="fb-message" name="message" rows="6" required maxlength="{{ max_message }}">{{ message }}</textarea>
+    <label for="fb-contact">How can we reply? <span class="muted">(optional: email or name)</span></label>
+    <input id="fb-contact" name="contact" type="text" maxlength="{{ max_contact }}" autocomplete="email" value="{{ contact }}">
+    {#- Honeypot: hidden from people and screen readers; bots tend to fill it in. -#}
+    <div class="hp" aria-hidden="true">
+      <label for="fb-website">Leave this empty</label>
+      <input id="fb-website" name="website" type="text" tabindex="-1" autocomplete="off">
+    </div>
+    <button type="submit">Send feedback</button>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

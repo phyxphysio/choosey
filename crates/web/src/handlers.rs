@@ -8,9 +8,10 @@ use axum::extract::{Form, Path, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use choosey_core::ids::{encode_base62, hash_secret, is_valid_id, verify_secret};
-use choosey_core::model::{Bounds, CriterionKind, Decision, Direction};
+use choosey_core::model::{Bounds, CriterionKind, Decision, Direction, Feedback};
 use choosey_core::validate::{
-    self, InvalidInput, MAX_CRITERIA, MAX_NAME, MAX_NOTES, MAX_OPTIONS, MAX_UNIT,
+    self, InvalidInput, MAX_CONTACT, MAX_CRITERIA, MAX_FEEDBACK, MAX_NAME, MAX_NOTES, MAX_OPTIONS,
+    MAX_UNIT,
 };
 use choosey_core::{roc, templates};
 use rand::TryRng;
@@ -20,7 +21,7 @@ use serde::Deserialize;
 use crate::app::AppState;
 use crate::error::AppError;
 use crate::export;
-use crate::views::{EditContext, EditPage, HomePage, Step, ViewPage, render};
+use crate::views::{EditContext, EditPage, FeedbackPage, HomePage, Step, ViewPage, render};
 
 type Result<T, E = AppError> = std::result::Result<T, E>;
 
@@ -675,4 +676,74 @@ pub async fn save_scores(
         Ok(())
     })
     .await
+}
+
+// ---------------------------------------------------------------------------------------------
+// Feedback
+
+#[derive(Debug, Deserialize)]
+pub struct FeedbackQuery {
+    sent: Option<String>,
+}
+
+/// `GET /feedback`
+pub async fn feedback_page(Query(q): Query<FeedbackQuery>) -> Response {
+    let page = FeedbackPage::new(q.sent.is_some(), None, String::new(), String::new());
+    render(&page, StatusCode::OK)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FeedbackForm {
+    #[serde(default)]
+    message: String,
+    #[serde(default)]
+    contact: String,
+    /// Honeypot: hidden from people (see `.hp` in app.css) but bots tend to fill in every field.
+    #[serde(default)]
+    website: String,
+}
+
+/// `POST /feedback`: save the message, then tell the owner (best effort).
+///
+/// The message is deliberately not linked to any decision, and the page sends no referrer, so
+/// feedback can never carry someone's edit link.
+pub async fn send_feedback(
+    State(s): State<AppState>,
+    Form(f): Form<FeedbackForm>,
+) -> Result<Response> {
+    let thanks = || Redirect::to("/feedback?sent=1").into_response();
+    if !f.website.is_empty() {
+        // Looks like a bot. Pretend it worked so it doesn't try another way.
+        tracing::info!("feedback honeypot triggered; dropped");
+        return Ok(thanks());
+    }
+
+    let cleaned =
+        validate::clean_text("Your feedback", &f.message, MAX_FEEDBACK).and_then(|message| {
+            if message.is_empty() {
+                return Err(invalid("Please write some feedback before sending."));
+            }
+            let contact = validate::clean_optional_line("Contact", &f.contact, MAX_CONTACT)?;
+            Ok((message, contact))
+        });
+    let (message, contact) = match cleaned {
+        Ok(v) => v,
+        Err(e) => {
+            // Show the form again with what they typed, so nothing is lost.
+            let page = FeedbackPage::new(false, Some(e.0), f.message, f.contact);
+            return Ok(render(&page, StatusCode::UNPROCESSABLE_ENTITY));
+        }
+    };
+
+    let feedback = Feedback {
+        id: random_id()?,
+        created_at: now(),
+        message,
+        contact,
+    };
+    s.store.add_feedback(&feedback).await?;
+    // Never log the message itself: it's the user's words and could contain anything.
+    tracing::info!(id_prefix = &feedback.id[..4], "feedback saved");
+    s.notifier.feedback(&feedback).await;
+    Ok(thanks())
 }

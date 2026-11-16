@@ -10,7 +10,7 @@ pub use dynamo::DynamoStore;
 pub use memory::MemoryStore;
 
 use async_trait::async_trait;
-use choosey_core::model::Decision;
+use choosey_core::model::{Decision, Feedback};
 
 /// Errors a store can return. Messages never include ids or secrets, so they are safe to log.
 #[derive(Debug, thiserror::Error)]
@@ -47,6 +47,9 @@ pub trait Store: Send + Sync {
 
     /// Delete a decision. Deleting something that doesn't exist is not an error.
     async fn delete(&self, view_id: &str) -> Result<(), StoreError>;
+
+    /// Save a feedback message. Fails with [`StoreError::AlreadyExists`] if the id is taken.
+    async fn add_feedback(&self, feedback: &Feedback) -> Result<(), StoreError>;
 }
 
 /// Behaviour every [`Store`] implementation must have. Used by the tests of each implementation.
@@ -121,6 +124,19 @@ pub mod conformance {
         assert!(matches!(
             store.put(&d, expected).await,
             Err(StoreError::Conflict)
+        ));
+
+        // Feedback is saved once; the same id can't be written twice.
+        let fb = choosey_core::model::Feedback {
+            id: format!("{prefix}feedback"),
+            created_at: 5,
+            message: "Love it".into(),
+            contact: String::new(),
+        };
+        store.add_feedback(&fb).await.unwrap();
+        assert!(matches!(
+            store.add_feedback(&fb).await,
+            Err(StoreError::AlreadyExists)
         ));
     }
 }

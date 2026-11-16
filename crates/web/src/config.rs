@@ -32,6 +32,8 @@ pub struct Config {
     pub origin_verify_secret: Option<String>,
     /// Send `Strict-Transport-Security` (only when served over https).
     pub hsts: bool,
+    /// SNS topic for feedback notifications. Unset locally: feedback is saved but nobody is told.
+    pub feedback_topic_arn: Option<String>,
 }
 
 // Hand-written so the secret can never end up in a log line via `{:?}`.
@@ -45,6 +47,7 @@ impl std::fmt::Debug for Config {
                 &self.origin_verify_secret.as_ref().map(|_| "<set>"),
             )
             .field("hsts", &self.hsts)
+            .field("feedback_topic_arn", &self.feedback_topic_arn)
             .finish()
     }
 }
@@ -101,6 +104,7 @@ impl Config {
             public_base_url: base,
             public_origin,
             origin_verify_secret,
+            feedback_topic_arn: get("FEEDBACK_TOPIC_ARN"),
         })
     }
 

@@ -9,6 +9,7 @@ mod error;
 mod export;
 mod handlers;
 mod middleware;
+pub mod notify;
 mod views;
 
 pub use middleware::ORIGIN_VERIFY_HEADER;

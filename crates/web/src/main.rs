@@ -9,6 +9,7 @@ use std::sync::Arc;
 use choosey_store::{DynamoStore, MemoryStore, Store};
 use choosey_web::app::{AppState, router};
 use choosey_web::config::{Config, StoreKind};
+use choosey_web::notify::{NoopNotifier, Notifier, SnsNotifier};
 use tracing_subscriber::EnvFilter;
 
 const LOCAL_ADDR: &str = "127.0.0.1:3000";
@@ -37,9 +38,16 @@ async fn main() -> ExitCode {
         }
     };
 
+    // Only publishes; nothing is called at startup.
+    let notifier: Arc<dyn Notifier> = match &config.feedback_topic_arn {
+        Some(arn) => Arc::new(SnsNotifier::from_env(arn.clone()).await),
+        None => Arc::new(NoopNotifier),
+    };
+
     let app = router(AppState {
         store,
         config: Arc::new(config),
+        notifier,
     });
 
     let result = if in_lambda {

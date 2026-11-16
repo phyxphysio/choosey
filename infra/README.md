@@ -10,6 +10,7 @@ Terraform for Choosey. Run by hand (`terraform apply`); CI only deploys app code
 | DNS (apex + www CNAME → CloudFront, ACM validation, CAA) | Cloudflare, DNS-only |
 | GitHub OIDC provider + deploy role (UpdateFunctionCode on this function only) | IAM |
 | $5/month budget alert | AWS Budgets |
+| Feedback SNS topic → email (app publishes after saving) | ap-southeast-2 |
 
 ## Origin protection
 The Function URL is public (`NONE` auth) but CloudFront adds a random `x-origin-verify`
@@ -37,7 +38,8 @@ Rotate: `terraform apply -replace=random_password.origin_verify`.
 3. **Cloudflare API token**: My Profile → API Tokens → Create Token → "Edit zone DNS"
    template, zone resources limited to `choosey.app` only. Export it; never commit it:
    `export CLOUDFLARE_API_TOKEN=...`
-4. `cp terraform.tfvars.example terraform.tfvars` and set `budget_alert_email`.
+4. `cp terraform.tfvars.example terraform.tfvars` and set `alert_email` (cost alerts and feedback emails go
+   there; confirm the SNS subscription email AWS sends after the first apply).
 
 ## Apply
 ```sh

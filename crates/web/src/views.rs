@@ -113,6 +113,35 @@ impl ErrorPage {
     }
 }
 
+#[derive(Template)]
+#[template(path = "feedback.html")]
+pub struct FeedbackPage {
+    pub app: String,
+    pub assets: &'static Assets,
+    pub sent: bool,
+    pub error: Option<String>,
+    /// What the user typed, kept when there's an error so nothing is lost.
+    pub message: String,
+    pub contact: String,
+    pub max_message: usize,
+    pub max_contact: usize,
+}
+
+impl FeedbackPage {
+    pub fn new(sent: bool, error: Option<String>, message: String, contact: String) -> Self {
+        Self {
+            app: display_name(),
+            assets: &ASSETS,
+            sent,
+            error,
+            message,
+            contact,
+            max_message: choosey_core::validate::MAX_FEEDBACK,
+            max_contact: choosey_core::validate::MAX_CONTACT,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Results (shared by the edit page and the read-only view)
 
