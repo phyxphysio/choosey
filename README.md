@@ -91,8 +91,8 @@ infra/         Terraform (AWS + Cloudflare)
 - **One binary, two modes.** If `AWS_LAMBDA_RUNTIME_API` is set, `main.rs` runs the router under
   `lambda_http` (Lambda Function URL, `provided.al2023`, arm64); otherwise it serves
   `127.0.0.1:3000`.
-- **Web.** axum + askama (templates compiled into the binary, auto-escaped) + htmx 2 (vendored)
-  and hand-written CSS. Static files are embedded with `include_bytes!` and served under
+- **Web.** axum + askama (templates compiled into the binary, auto-escaped) + htmx 2 (vendored),
+  hand-written CSS and a small hand-written `app.js` (Copy buttons for links; hidden without JS). Static files are embedded with `include_bytes!` and served under
   content-versioned names. Every change is a POST that redirects back to a GET page; htmx makes the
   same requests in the background and swaps in the relevant fragment (`hx-select`).
 - **Data.** Each decision is one DynamoDB item: `pk = "DEC#<view_id>"` plus the serde

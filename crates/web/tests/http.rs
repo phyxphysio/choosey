@@ -736,3 +736,44 @@ async fn rank_mode_previews_suggested_weights() {
     let page = body(get(&app, &format!("{edit}?mode=rank")).await).await;
     assert_eq!(count(&page, "now 10 → suggested"), 2);
 }
+
+/// Every link box has a Copy button, hidden until our script reveals it, and the script is served
+/// as a separate, cacheable file (the CSP allows no inline JavaScript).
+#[tokio::test]
+async fn link_boxes_have_copy_buttons() {
+    let app = app();
+    let res = post(&app, "/d", "template=blank").await;
+    let new = body(get(&app, &location(&res)).await).await;
+    let edit = location(&res).trim_end_matches("?new=1").to_string();
+    assert!(new.contains(
+        r#"<button type="button" class="secondary copy-button" data-copy="new-edit-url" aria-live="polite" hidden>Copy</button>"#
+    ));
+    assert_csp_clean(&new);
+
+    let results = body(get(&app, &format!("{edit}/results")).await).await;
+    assert_csp_clean(&results);
+    for id in ["view-url", "edit-url"] {
+        assert!(results.contains(&format!(
+            r#"<input id="{id}" class="copy" type="text" readonly"#
+        )));
+        assert!(results.contains(&format!(
+            r#"data-copy="{id}" aria-live="polite" hidden>Copy<"#
+        )));
+    }
+
+    // The script is linked from every page, deferred, under a content-hashed name.
+    let js = results
+        .split('"')
+        .find(|s| s.starts_with("/static/app.") && s.ends_with(".js"))
+        .unwrap()
+        .to_string();
+    assert!(results.contains(&format!(r#"<script src="{js}" defer></script>"#)));
+    let res = get(&app, &js).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(header_of(&res, "content-type").starts_with("text/javascript"));
+    assert_eq!(header_of(&res, "cache-control"), "public, max-age=86400");
+    let script = body(res).await;
+    assert!(script.contains("navigator.clipboard") && script.contains("htmx:load"));
+    // htmx's own settings are unchanged.
+    assert!(results.contains(r#""historyCacheSize":0"#));
+}

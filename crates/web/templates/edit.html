@@ -6,7 +6,8 @@
   <h2>Bookmark this link. It's the only way back in.</h2>
   <p>Anyone with this link can edit this decision. There are no accounts and no way to recover it.</p>
   <label for="new-edit-url">Your edit link</label>
-  <input id="new-edit-url" class="copy" type="text" readonly value="{{ edit_url }}">
+  {% let copy_id = "new-edit-url" %}{% let copy_value = edit_url.as_str() %}
+  {% include "copy_link.html" %}
 </section>
 {% endif %}
 
@@ -247,9 +248,11 @@
 <section class="panel">
   <h2>Share</h2>
   <label for="view-url">View-only link: safe to share, nobody can change anything with it</label>
-  <input id="view-url" class="copy" type="text" readonly value="{{ view_url }}">
+  {% let copy_id = "view-url" %}{% let copy_value = view_url.as_str() %}
+  {% include "copy_link.html" %}
   <label for="edit-url">Your edit link: keep it private</label>
-  <input id="edit-url" class="copy" type="text" readonly value="{{ edit_url }}">
+  {% let copy_id = "edit-url" %}{% let copy_value = edit_url.as_str() %}
+  {% include "copy_link.html" %}
   <p><a class="button secondary" href="{{ export_href }}" hx-boost="false" download>Download CSV</a></p>
 </section>
 
