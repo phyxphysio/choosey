@@ -13,7 +13,7 @@ use choosey_core::validate::{
     self, InvalidInput, MAX_CONTACT, MAX_CRITERIA, MAX_FEEDBACK, MAX_NAME, MAX_NOTES, MAX_OPTIONS,
     MAX_UNIT,
 };
-use choosey_core::{roc, templates};
+use choosey_core::{rank_weights, templates};
 use rand::TryRng;
 use rand::rngs::SysRng;
 use serde::Deserialize;
@@ -75,6 +75,11 @@ pub struct EditQuery {
     new: Option<String>,
     mode: Option<String>,
     option: Option<String>,
+    /// Ranks typed into the "Rank instead" form, one per criterion in criterion order, when the
+    /// user pressed "Update suggestions". Not read by serde: the `r.{id}` field names are dynamic,
+    /// so [`criteria_page`] parses them separately.
+    #[serde(skip)]
+    ranks: Option<Vec<u32>>,
 }
 
 fn edit_page(
@@ -93,6 +98,7 @@ fn edit_page(
             step,
             is_new: q.new.is_some() && step == Step::Criteria,
             rank_mode: q.mode.as_deref() == Some("rank"),
+            ranks: q.ranks.clone(),
             option: q.option.as_deref(),
             error: error.clone(),
         },
@@ -274,12 +280,23 @@ async fn show(
 }
 
 /// `GET /d/{view_id}/edit/{secret}` (also `/criteria`)
+///
+/// In rank mode, the "Update suggestions" button submits the rank form here as a GET, with
+/// `r.{criterion_id}` fields, so the page can preview the weights those ranks (including ties)
+/// would give before anything is saved.
 pub async fn criteria_page(
     State(s): State<AppState>,
-    Path(p): EditPath,
-    Query(q): Query<EditQuery>,
+    Path((view_id, secret)): EditPath,
+    Query(mut q): Query<EditQuery>,
+    Query(pairs): Query<Vec<(String, String)>>,
 ) -> Result<Response> {
-    show(s, p, Step::Criteria, q).await
+    let d = load_edit(&s, &view_id, &secret).await?;
+    if q.mode.as_deref() == Some("rank") && pairs.iter().any(|(k, _)| k.starts_with("r.")) {
+        // Only a preview, so bad numbers are ignored rather than reported: the page then
+        // shows the suggestion for the current order.
+        q.ranks = parse_ranks(&d, &pairs).ok();
+    }
+    Ok(edit_page(&s, &d, &secret, Step::Criteria, &q, None))
 }
 
 /// `GET /d/{view_id}/edit/{secret}/options`
@@ -527,31 +544,40 @@ pub async fn save_weights(
     .await
 }
 
+/// Read `r.{criterion_id}` = rank fields into one rank per criterion, in criterion order
+/// (1 = most important, equal numbers tie). A criterion missing from the fields keeps its current
+/// position as its rank; fields for unknown criteria are ignored.
+fn parse_ranks(d: &Decision, pairs: &[(String, String)]) -> Result<Vec<u32>, InvalidInput> {
+    let mut ranks: Vec<u32> = (1..=d.criteria.len() as u32).collect();
+    for (key, value) in pairs {
+        if let Some(cid) = key.strip_prefix("r.")
+            && let Some(i) = d.criteria.iter().position(|c| c.id == cid)
+        {
+            ranks[i] = value
+                .trim()
+                .parse::<u32>()
+                .ok()
+                .filter(|r| (1..=1000).contains(r))
+                .ok_or_else(|| invalid("Ranks must be whole numbers, 1 for the most important."))?;
+        }
+    }
+    Ok(ranks)
+}
+
 /// `POST .../rank`: fields `r.{criterion_id}` = rank (1 = most important, equal numbers tie).
-/// Sets every weight from Rank Order Centroid suggestions.
+/// Sets every weight from the rank-sum suggestions (see `choosey_core::rank_weights`).
 pub async fn apply_rank(
     State(s): State<AppState>,
     Path((v, k)): EditPath,
     Form(pairs): Pairs,
 ) -> Result<Response> {
     mutate(&s, (&v, &k), Step::Criteria, "", |d| {
-        // Default to the current order for any criterion missing from the form.
-        let mut ranks: Vec<u32> = (1..=d.criteria.len() as u32).collect();
-        for (key, value) in &pairs {
-            if let Some(cid) = key.strip_prefix("r.")
-                && let Some(i) = d.criteria.iter().position(|c| c.id == cid)
-            {
-                ranks[i] = value
-                    .trim()
-                    .parse::<u32>()
-                    .ok()
-                    .filter(|r| (1..=1000).contains(r))
-                    .ok_or_else(|| {
-                        invalid("Ranks must be whole numbers, 1 for the most important.")
-                    })?;
-            }
-        }
-        for (c, w) in d.criteria.iter_mut().zip(roc::roc_weights(&ranks)) {
+        let ranks = parse_ranks(d, &pairs)?;
+        for (c, w) in d
+            .criteria
+            .iter_mut()
+            .zip(rank_weights::suggested_weights(&ranks))
+        {
             c.weight = w;
         }
         Ok(())

@@ -241,12 +241,12 @@ async fn blank_decision_criteria_and_ranking() {
         1
     );
 
-    // Rank: Team first, Pay and Commute tied second -> 10, 3, 3 (see core::roc tests).
+    // Rank: Team first, Pay and Commute tied second -> 10, 5, 5 (see core::rank_weights tests).
     let res = post(&app, &format!("{edit}/rank"), "r.c1=2&r.c2=1&r.c3=2").await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     let page = body(get(&app, &edit).await).await;
     assert!(page.contains(
-        "id=\"w-c1\" name=\"w.c1\" type=\"range\" min=\"0\" max=\"10\" step=\"1\" value=\"3\""
+        "id=\"w-c1\" name=\"w.c1\" type=\"range\" min=\"0\" max=\"10\" step=\"1\" value=\"5\""
     ));
     assert!(
         page.contains("name=\"w.c2\" type=\"range\" min=\"0\" max=\"10\" step=\"1\" value=\"10\"")
@@ -652,4 +652,87 @@ async fn feedback_rejects_cross_origin_posts() {
         .body(Body::from("message=hi"))
         .unwrap();
     assert_eq!(send(&app, req).await.status(), StatusCode::FORBIDDEN);
+}
+
+/// Number of times `needle` appears in `haystack`.
+fn count(haystack: &str, needle: &str) -> usize {
+    haystack.matches(needle).count()
+}
+
+/// In rank mode each row shows the weight it would get before "Apply" is pressed, recomputed on
+/// every render: after moving a criterion, and when previewing typed ties.
+#[tokio::test]
+async fn rank_mode_previews_suggested_weights() {
+    let app = app();
+    let edit = create(&app, "template=blank").await;
+    for name in [
+        "Cost",
+        "Family",
+        "Climate",
+        "Community",
+        "Walkability",
+        "Healthcare",
+        "Fun",
+    ] {
+        post(
+            &app,
+            &format!("{edit}/criteria"),
+            &format!("name={name}&kind=rated"),
+        )
+        .await;
+    }
+
+    // Every new criterion starts at weight 5. Seven in order suggest 10, 9, 7, 6, 4, 3, 1.
+    let page = body(get(&app, &format!("{edit}?mode=rank")).await).await;
+    assert_csp_clean(&page);
+    let shown: Vec<&str> = page
+        .match_indices("now 5 → suggested <strong>")
+        .map(|(i, m)| {
+            let rest = &page[i + m.len()..];
+            &rest[..rest.find('<').unwrap()]
+        })
+        .collect();
+    assert_eq!(shown, ["10", "9", "7", "6", "4", "3", "1"]);
+
+    // Moving Fun (c7) up re-renders the page with the suggestion for the new order.
+    post(&app, &format!("{edit}/criteria/c7/up"), "").await;
+    let page = body(get(&app, &format!("{edit}?mode=rank")).await).await;
+    let fun = &page[page.find("r-c7").unwrap()..];
+    assert!(fun.contains(
+        "Fun\n          <span class=\"rank-weights muted\">now 5 → suggested <strong>3</strong>"
+    ));
+
+    // "Update suggestions" sends typed ranks back as a GET: ties share the average, nothing is
+    // saved, and the typed numbers stay in the boxes.
+    let preview = format!("{edit}?mode=rank&r.c1=1&r.c2=1&r.c3=2&r.c4=3&r.c5=4&r.c6=5&r.c7=6");
+    let page = body(get(&app, &preview).await).await;
+    // Cost and Family tied first: (7 + 6) / 2 = 6.5 is the top -> 10; Climate 5 / 6.5 -> 8.
+    assert_eq!(count(&page, "suggested <strong>10</strong>"), 2);
+    assert!(
+        page.contains(
+            r#"name="r.c2" type="number" inputmode="numeric" min="1" max="30" value="1""#
+        )
+    );
+    assert_eq!(count(&page, "now 5 →"), 7, "nothing was saved");
+    // The button that does it is a GET back to this page; the form carries mode=rank.
+    assert!(page.contains(&format!(
+        r#"formmethod="get" formaction="{edit}">Update suggestions"#
+    )));
+    assert!(page.contains(r#"<input type="hidden" name="mode" value="rank">"#));
+
+    // Bad numbers in a preview are ignored (the current order is shown), not an error.
+    let res = get(&app, &format!("{edit}?mode=rank&r.c1=abc")).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(body(res).await.contains("suggested <strong>10</strong>"));
+
+    // Applying the tied ranks sets exactly the previewed weights.
+    let res = post(
+        &app,
+        &format!("{edit}/rank"),
+        "mode=rank&r.c1=1&r.c2=1&r.c3=2&r.c4=3&r.c5=4&r.c6=5&r.c7=6",
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let page = body(get(&app, &format!("{edit}?mode=rank")).await).await;
+    assert_eq!(count(&page, "now 10 → suggested"), 2);
 }

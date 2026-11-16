@@ -42,12 +42,17 @@ Total for option o, counting only the criteria it has a score for (C_o):
 - Rank by total, highest first. Ties are broken by coverage, then by the score on the highest-weighted criterion.
 - If every weight is 0, return an error state rather than dividing by zero.
 
-Ranking to set weights: the user orders the criteria (ties allowed). Compute Rank Order Centroid weights
-`ROC_k = (1/n) Σ_{j=k..n} 1/j`, then scale so the top criterion is 10 and round to integers (minimum 1).
-Tied criteria share the average of their ROC values. These are only suggestions; the user can then move the sliders.
+Ranking to set weights: the user orders the criteria (ties allowed). Compute rank-sum weights: for n criteria,
+the one at rank k (1 = most important) gets `n - k + 1`, then scale so the top criterion is 10 and round to
+integers (minimum 1). Tied criteria share the average of their raw values. For 7 criteria this gives
+10, 9, 7, 6, 4, 3, 1. (The first version used Rank Order Centroid, `ROC_k = (1/n) Σ_{j=k..n} 1/j`, but it was
+too steep for non-technical users: 7 criteria became 10, 6, 4, 3, 2, 1, 1, so the bottom half barely counted.
+Rank-sum falls in equal steps, which is closer to what people expect.) Rank mode shows each criterion's
+suggested weight next to its current one before it's applied. These are only suggestions; the user can then
+move the sliders.
 
 Required tests: hand-calculated examples, min-max in both directions, bounds clamping, a single option,
-all values the same, missing scores and coverage, all weights 0, ROC values for n = 1..6 with ties,
+all values the same, missing scores and coverage, all weights 0, rank-sum weights for n = 1..7 with ties,
 and property tests (proptest) that every total is in [0, 100] and that scaling every weight by k changes nothing.
 
 ## 3. Architecture
@@ -103,7 +108,7 @@ participants: [{ id, name }]   # the MVP always has exactly one: "owner"
   "Bookmark this link. It's the only way back in."
 - The edit page uses mobile-first tabs/steps: **Criteria → Options → Score → Results**.
   - Criteria: add, rename, delete, choose the kind. Weights are set either with sliders or with a
-    "Rank instead" mode that offers up/down buttons (avoid drag-and-drop JS), then applies the ROC suggestion.
+    "Rank instead" mode that offers up/down buttons (avoid drag-and-drop JS), then applies the rank-sum suggestion.
   - Options: add, rename, delete, notes.
   - Score: one option at a time on mobile (a card for each criterion), with a grid on wide screens.
   - Results: ranked list with the total, a coverage badge and a stacked breakdown bar (CSS only).
@@ -148,7 +153,7 @@ Templates are defined as static data in code. Each is a list of criteria with su
 
 ## 9. Build order (each phase ends with passing tests and a short README update)
 0. Scaffold the workspace, CI checks, `.gitignore`, and a README with local run instructions.
-1. `core`: types, scoring, ROC, normalisation, and the tests listed in section 2.
+1. `core`: types, scoring, rank weights, normalisation, and the tests listed in section 2.
 2. `store`: the trait and MemoryStore.
 3. `web`: routes, templates and HTMX flows, running locally with MemoryStore. Add handler tests using
    `tower::ServiceExt::oneshot`.

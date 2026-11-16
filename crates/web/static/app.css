@@ -120,7 +120,7 @@ button, .button {
   text-decoration: none;
   cursor: pointer;
 }
-.button.secondary { background: transparent; color: var(--accent); }
+.button.secondary, button.secondary { background: transparent; color: var(--accent); }
 button.danger { background: transparent; color: var(--danger); border-color: var(--danger); }
 button.icon { min-width: 2.75rem; padding: .4rem; background: transparent; color: var(--accent); }
 button:disabled { opacity: .4; cursor: default; }
@@ -159,6 +159,7 @@ button:disabled { opacity: .4; cursor: default; }
 .rank-row { display: flex; gap: .5rem; align-items: center; }
 .rank-input { width: 4.5rem !important; flex: 0 0 4.5rem; }
 .rank-name { flex: 1; overflow-wrap: anywhere; }
+.rank-weights { display: block; font-size: .875rem; }
 .rank-buttons { display: flex; gap: .25rem; }
 .item { border-top: 1px solid var(--border); padding: .5rem 0; }
 .item:first-of-type { border-top: 0; }

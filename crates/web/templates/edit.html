@@ -46,14 +46,17 @@
   {% if rank_mode %}
   {# Rank mode: order with up/down buttons (no drag and drop), tie by giving equal numbers. #}
   <form id="rank" method="post" action="{{ base }}/rank" class="stack">
-    <p class="muted">Put the most important first. Give two criteria the same number to tie them. Then apply the
-      suggested weights and fine-tune with the sliders.</p>
+    <p class="muted">Put the most important first. Give two criteria the same number to tie them. Each row shows its
+      weight now and the weight it would get. Apply the suggested weights, then fine-tune with the sliders.</p>
+    {#- Only used by "Update suggestions" (a GET back to this page); the POST handlers ignore it. -#}
+    <input type="hidden" name="mode" value="rank">
     <ol class="rank-list">
       {% for c in criteria %}
       <li class="rank-row">
         <label class="visually-hidden" for="r-{{ c.id }}">Rank of {{ c.name }}</label>
-        <input id="r-{{ c.id }}" class="rank-input" name="r.{{ c.id }}" type="number" inputmode="numeric" min="1" max="{{ limits.criteria }}" value="{{ c.position }}">
-        <span class="rank-name">{{ c.name }} <span class="muted">(weight {{ c.weight }})</span></span>
+        <input id="r-{{ c.id }}" class="rank-input" name="r.{{ c.id }}" type="number" inputmode="numeric" min="1" max="{{ limits.criteria }}" value="{{ c.rank }}">
+        <span class="rank-name">{{ c.name }}
+          <span class="rank-weights muted">now {{ c.weight }} → suggested <strong>{{ c.suggested }}</strong></span></span>
         <span class="rank-buttons">
           <button type="submit" class="icon" formaction="{{ base }}/criteria/{{ c.id }}/up" {% if c.is_first %}disabled{% endif %} aria-label="Move {{ c.name }} up">↑</button>
           <button type="submit" class="icon" formaction="{{ base }}/criteria/{{ c.id }}/down" {% if c.is_last %}disabled{% endif %} aria-label="Move {{ c.name }} down">↓</button>
@@ -61,7 +64,11 @@
       </li>
       {% endfor %}
     </ol>
-    <button type="submit">Apply suggested weights</button>
+    <div class="row">
+      <button type="submit">Apply suggested weights</button>
+      {#- Previews the suggestion for typed numbers (ties) without saving anything. -#}
+      <button type="submit" class="secondary" formmethod="get" formaction="{{ base }}">Update suggestions</button>
+    </div>
   </form>
   {% else %}
   {# Sliders. With JS, htmx saves on every change and re-renders the form so the numbers update. #}

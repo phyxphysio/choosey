@@ -8,6 +8,7 @@ use askama::Template;
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Response};
 use choosey_core::model::{CriterionKind, Decision, Direction};
+use choosey_core::rank_weights;
 use choosey_core::scoring::{self, ScoreError};
 use choosey_core::templates::TEMPLATES;
 use choosey_core::validate::{MAX_CRITERIA, MAX_NAME, MAX_NOTES, MAX_OPTIONS, MAX_UNIT};
@@ -332,7 +333,6 @@ pub struct StepLink {
 
 pub struct CriterionRow {
     pub id: String,
-    pub position: usize,
     pub name: String,
     /// "rated", "higher" or "lower" (the value of the kind `<select>`).
     pub kind: String,
@@ -341,6 +341,12 @@ pub struct CriterionRow {
     pub worst: String,
     pub best: String,
     pub weight: u8,
+    /// The number in this criterion's box in rank mode: its position, or what the user typed when
+    /// previewing ties.
+    pub rank: u32,
+    /// The weight "Apply suggested weights" would give it, shown next to the current weight in
+    /// rank mode so the user sees the result before applying it.
+    pub suggested: u8,
     /// Numeric without bounds: show the min-max warning.
     pub minmax_hint: bool,
     pub is_first: bool,
@@ -414,6 +420,8 @@ pub struct EditContext<'a> {
     pub error: Option<String>,
     pub is_new: bool,
     pub rank_mode: bool,
+    /// Ranks to preview in rank mode, one per criterion; `None` means the current order.
+    pub ranks: Option<Vec<u32>>,
     pub option: Option<&'a str>,
 }
 
@@ -468,6 +476,13 @@ impl EditPage {
             .and_then(|i| Step::ALL.get(i + 1).map(|&s| step_link(i + 1, s)));
 
         let n = d.criteria.len();
+        // Suggested weights are recomputed on every render, so moving a criterion up or down (which
+        // re-renders the page) updates them without any JavaScript.
+        let ranks = ctx
+            .ranks
+            .filter(|r| r.len() == n)
+            .unwrap_or_else(|| (1..=n as u32).collect());
+        let suggested = rank_weights::suggested_weights(&ranks);
         let criteria = d
             .criteria
             .iter()
@@ -476,7 +491,6 @@ impl EditPage {
                 let (kind, kind_label, unit, worst, best, minmax_hint) = kind_fields(&c.kind);
                 CriterionRow {
                     id: c.id.clone(),
-                    position: i + 1,
                     name: c.name.clone(),
                     kind: kind.to_string(),
                     kind_label,
@@ -484,6 +498,8 @@ impl EditPage {
                     worst,
                     best,
                     weight: c.weight,
+                    rank: ranks[i],
+                    suggested: suggested[i],
                     minmax_hint,
                     is_first: i == 0,
                     is_last: i + 1 == n,

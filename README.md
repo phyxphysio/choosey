@@ -5,7 +5,7 @@ A weighted decision-matrix web app to help get past analysis paralysis. List wha
 with a breakdown of what drove each score.
 
 - Start blank or from a template (rent/buy a home, where to retire, job offer).
-- Set weights with sliders, or rank the criteria and get suggested weights (Rank Order Centroid).
+- Set weights with sliders, or rank the criteria and see suggested weights (rank-sum) before applying them.
 - Score as a 0-10 rating, or enter real numbers (price, minutes) that are scaled automatically,
   either between fixed "worst" and "best" bounds or min-max across your options.
 - Missing scores never count as zero: totals use only what's been scored, and an "incomplete"
@@ -35,8 +35,9 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-- `crates/core`: scoring maths with hand-calculated examples, ROC weights for n = 1..6 with ties,
-  and property tests (totals stay in [0, 100]; scaling every weight changes nothing).
+- `crates/core`: scoring maths with hand-calculated examples, rank-sum weights for n = 1..7 with
+  ties, and property tests (totals stay in [0, 100]; scaling every weight changes nothing;
+  suggested weights are 1-10 and never increase as rank falls).
 - `crates/store`: a shared conformance check run against each backend.
 - `crates/web/tests/http.rs`: the HTTP flows, driven in-process with `tower::ServiceExt::oneshot`,
   including security headers, CSP-clean HTML, validation, 404s and Origin/secret checks.
@@ -80,7 +81,7 @@ The app name lives in one place, `choosey_core::APP_NAME`.
 ## Architecture
 
 ```
-crates/core    domain types, scoring, ROC, templates, validation (pure: no async, no I/O)
+crates/core    domain types, scoring, rank weights, templates, validation (pure: no async, no I/O)
 crates/store   Store trait; MemoryStore; DynamoStore (one item per decision)
 crates/web     axum app, askama templates, static assets, main.rs (binary `choosey`)
 infra/         Terraform (AWS + Cloudflare)
