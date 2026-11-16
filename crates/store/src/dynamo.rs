@@ -3,6 +3,9 @@
 //! The item is the serde serialisation of [`Decision`] (via `serde_dynamo`) plus the partition key
 //! `pk = "DEC#<view_id>"`. Writes are conditional on the `version` attribute, which gives
 //! optimistic concurrency without locks.
+//!
+//! Feedback messages live in the same table under `pk = "FEEDBACK#<id>"`. They never share a
+//! key with a decision, and decisions are only ever read by their exact key, so the two can't mix.
 
 use std::collections::HashMap;
 
@@ -10,7 +13,7 @@ use async_trait::async_trait;
 use aws_sdk_dynamodb::Client;
 use aws_sdk_dynamodb::error::{DisplayErrorContext, ProvideErrorMetadata, SdkError};
 use aws_sdk_dynamodb::types::AttributeValue;
-use choosey_core::model::Decision;
+use choosey_core::model::{Decision, Feedback};
 
 use crate::{Store, StoreError};
 
@@ -131,5 +134,28 @@ impl Store for DynamoStore {
             .await
             .map_err(backend)?;
         Ok(())
+    }
+
+    async fn add_feedback(&self, feedback: &Feedback) -> Result<(), StoreError> {
+        let mut item: HashMap<String, AttributeValue> = serde_dynamo::to_item(feedback)
+            .map_err(|e| StoreError::Backend(format!("serialise: {e}")))?;
+        item.insert(
+            PK.to_string(),
+            AttributeValue::S(format!("FEEDBACK#{}", feedback.id)),
+        );
+        let result = self
+            .client
+            .put_item()
+            .table_name(&self.table)
+            .set_item(Some(item))
+            .condition_expression("attribute_not_exists(#pk)")
+            .expression_attribute_names("#pk", PK)
+            .send()
+            .await;
+        match result {
+            Ok(_) => Ok(()),
+            Err(e) if is_condition_failed(&e) => Err(StoreError::AlreadyExists),
+            Err(e) => Err(backend(e)),
+        }
     }
 }

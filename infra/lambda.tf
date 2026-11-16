@@ -35,6 +35,11 @@ data "aws_iam_policy_document" "lambda" {
     resources = [aws_dynamodb_table.decisions.arn]
   }
   statement {
+    sid       = "PublishFeedback"
+    actions   = ["sns:Publish"]
+    resources = [aws_sns_topic.feedback.arn]
+  }
+  statement {
     sid       = "Logs"
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
     resources = ["${aws_cloudwatch_log_group.lambda.arn}:*"]
@@ -79,6 +84,7 @@ resource "aws_lambda_function" "app" {
       PUBLIC_BASE_URL      = "https://${var.domain}"
       ORIGIN_VERIFY_SECRET = random_password.origin_verify.result
       RUST_LOG             = "info"
+      FEEDBACK_TOPIC_ARN   = aws_sns_topic.feedback.arn
     }
   }
 

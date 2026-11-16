@@ -234,3 +234,16 @@ impl Decision {
         expected
     }
 }
+
+/// A message sent through the feedback form. Stored separately from decisions and never linked to
+/// one, so it can't reveal anyone's edit link.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Feedback {
+    /// Random id (128-bit, base62), so items can't collide or be guessed.
+    pub id: String,
+    /// Unix timestamp in seconds.
+    pub created_at: i64,
+    pub message: String,
+    /// Optional way to reply (an email address, a name...). Free text, may be empty.
+    pub contact: String,
+}

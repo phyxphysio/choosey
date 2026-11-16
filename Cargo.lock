@@ -231,6 +231,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-sns"
+version = "1.123.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4b05d2de1888d5bcb8d4e91feece4bc210131777cf44a1b304abd63def6de9e"
+dependencies = [
+ "arc-swap",
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-observability",
+ "aws-smithy-query",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-schema",
+ "aws-smithy-types",
+ "aws-smithy-xml",
+ "aws-types",
+ "fastrand",
+ "http",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
 name = "aws-sdk-sts"
 version = "1.126.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -731,6 +757,9 @@ name = "choosey-web"
 version = "0.1.0"
 dependencies = [
  "askama",
+ "async-trait",
+ "aws-config",
+ "aws-sdk-sns",
  "axum",
  "choosey-core",
  "choosey-store",

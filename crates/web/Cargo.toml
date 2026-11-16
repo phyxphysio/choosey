@@ -12,6 +12,9 @@ path = "src/main.rs"
 
 [dependencies]
 askama = "0.16.1"
+async-trait = "0.1.92"
+aws-config = { version = "1.13.2", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
+aws-sdk-sns = { version = "1.123.0", default-features = false, features = ["default-https-client", "rt-tokio"] }
 axum = "0.8.9"
 choosey-core = { path = "../core" }
 choosey-store = { path = "../store" }

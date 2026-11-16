@@ -7,6 +7,8 @@ use axum::extract::DefaultBodyLimit;
 use axum::middleware::{from_fn, from_fn_with_state};
 use axum::routing::{get, post};
 use choosey_store::Store;
+
+use crate::notify::Notifier;
 use tower_http::limit::RequestBodyLimitLayer;
 
 use crate::config::Config;
@@ -17,11 +19,12 @@ use crate::{assets, handlers as h, middleware as mw};
 /// criteria) is well under this.
 pub const MAX_BODY_BYTES: usize = 64 * 1024;
 
-/// State shared by every request. Cloning is cheap: it's two `Arc`s.
+/// State shared by every request. Cloning is cheap: it's all `Arc`s.
 #[derive(Clone)]
 pub struct AppState {
     pub store: Arc<dyn Store>,
     pub config: Arc<Config>,
+    pub notifier: Arc<dyn Notifier>,
 }
 
 /// Build the router with all middleware.
@@ -45,8 +48,11 @@ pub fn router(state: AppState) -> Router {
         .route("/title", post(h::rename))
         .route("/delete", post(h::delete_decision));
 
+    // Top-level paths must also be listed in the CloudFront function in infra/cloudfront.tf,
+    // which 404s everything else at the edge.
     Router::new()
         .route("/", get(h::home))
+        .route("/feedback", get(h::feedback_page).post(h::send_feedback))
         .route("/d", post(h::create))
         .route("/d/{view_id}", get(h::view))
         .route("/d/{view_id}/export.csv", get(h::export_csv))

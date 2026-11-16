@@ -6,6 +6,10 @@ pub const MAX_NAME: usize = 100;
 pub const MAX_NOTES: usize = 1000;
 /// Maximum length of a numeric criterion's unit, in characters.
 pub const MAX_UNIT: usize = 30;
+/// Longest feedback message, in characters.
+pub const MAX_FEEDBACK: usize = 2000;
+/// Longest "how to reach you" field on the feedback form.
+pub const MAX_CONTACT: usize = 200;
 /// Maximum number of criteria per decision.
 pub const MAX_CRITERIA: usize = 30;
 /// Maximum number of options per decision.

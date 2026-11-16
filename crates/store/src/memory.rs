@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use choosey_core::model::Decision;
+use choosey_core::model::{Decision, Feedback};
 
 use crate::{Store, StoreError};
 
@@ -13,6 +13,7 @@ use crate::{Store, StoreError};
 #[derive(Default)]
 pub struct MemoryStore {
     decisions: Mutex<HashMap<String, Decision>>,
+    feedback: Mutex<Vec<Feedback>>,
 }
 
 impl MemoryStore {
@@ -24,6 +25,14 @@ impl MemoryStore {
         // A poisoned lock means another thread panicked mid-update. The map itself is still
         // usable, so carry on rather than taking the whole server down.
         self.decisions.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Every feedback message saved so far (for tests).
+    pub fn feedback(&self) -> Vec<Feedback> {
+        self.feedback
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 }
 
@@ -55,6 +64,15 @@ impl Store for MemoryStore {
 
     async fn delete(&self, view_id: &str) -> Result<(), StoreError> {
         self.lock().remove(view_id);
+        Ok(())
+    }
+
+    async fn add_feedback(&self, feedback: &Feedback) -> Result<(), StoreError> {
+        let mut all = self.feedback.lock().unwrap_or_else(|e| e.into_inner());
+        if all.iter().any(|f| f.id == feedback.id) {
+            return Err(StoreError::AlreadyExists);
+        }
+        all.push(feedback.clone());
         Ok(())
     }
 }

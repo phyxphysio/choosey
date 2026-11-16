@@ -8,6 +8,7 @@ use axum::http::{Request, Response, StatusCode, header};
 use choosey_store::MemoryStore;
 use choosey_web::app::{AppState, router};
 use choosey_web::config::Config;
+use choosey_web::notify::NoopNotifier;
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
@@ -15,6 +16,7 @@ fn app_with(config: Config) -> Router {
     router(AppState {
         store: Arc::new(MemoryStore::new()),
         config: Arc::new(config),
+        notifier: Arc::new(NoopNotifier),
     })
 }
 
@@ -555,4 +557,99 @@ async fn next_keeps_a_typed_but_unadded_item() {
     let bad = format!("{}/edit/{}", view_path(&edit), "A".repeat(22));
     let res = post(&app, &format!("{bad}/options"), "then=next&name=&notes=").await;
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
+
+/// A notifier that remembers what it was asked to send.
+#[derive(Default)]
+struct RecordingNotifier {
+    sent: std::sync::Mutex<Vec<choosey_core::model::Feedback>>,
+}
+
+#[async_trait::async_trait]
+impl choosey_web::notify::Notifier for RecordingNotifier {
+    async fn feedback(&self, feedback: &choosey_core::model::Feedback) {
+        self.sent.lock().unwrap().push(feedback.clone());
+    }
+}
+
+#[tokio::test]
+async fn feedback_is_saved_and_notified() {
+    let store = Arc::new(MemoryStore::new());
+    let notifier = Arc::new(RecordingNotifier::default());
+    let app = router(AppState {
+        store: store.clone(),
+        config: Arc::new(Config::for_tests()),
+        notifier: notifier.clone(),
+    });
+
+    // Every page links to the form, and the form itself is CSP-clean.
+    assert!(
+        body(get(&app, "/").await)
+            .await
+            .contains(r#"href="/feedback""#)
+    );
+    let page = body(get(&app, "/feedback").await).await;
+    assert!(page.contains(r#"name="message""#) && page.contains(r#"name="website""#));
+    assert_csp_clean(&page);
+
+    // A real message is saved, notified, and followed by a thank-you page.
+    let res = post(
+        &app,
+        "/feedback",
+        "message=The+score+page+is+confusing%0D%0Aplease+fix&contact=me%40example.com&website=",
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    assert_eq!(location(&res), "/feedback?sent=1");
+    assert!(
+        body(get(&app, "/feedback?sent=1").await)
+            .await
+            .contains("Thanks!")
+    );
+    let saved = store.feedback();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].message, "The score page is confusing\nplease fix");
+    assert_eq!(saved[0].contact, "me@example.com");
+    assert_eq!(notifier.sent.lock().unwrap().as_slice(), saved.as_slice());
+
+    // Empty or overlong messages are rejected, keeping what was typed; nothing is saved.
+    let res = post(&app, "/feedback", "message=+++&contact=Sam").await;
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let html = body(res).await;
+    assert!(html.contains("Please write some feedback") && html.contains(r#"value="Sam""#));
+    let long = "x".repeat(2001);
+    let res = post(&app, "/feedback", &format!("message={long}")).await;
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    // The honeypot quietly drops bots: same thank-you redirect, nothing saved or sent.
+    let res = post(
+        &app,
+        "/feedback",
+        "message=Buy+now&website=http%3A%2F%2Fspam",
+    )
+    .await;
+    assert_eq!(location(&res), "/feedback?sent=1");
+    assert_eq!(store.feedback().len(), 1);
+    assert_eq!(notifier.sent.lock().unwrap().len(), 1);
+
+    // User text is escaped in the page, never interpreted as HTML.
+    let res = post(
+        &app,
+        "/feedback",
+        "message=+&contact=%3Cscript%3Ex%3C%2Fscript%3E",
+    )
+    .await;
+    let html = body(res).await;
+    assert!(!html.contains("<script>x") && html.contains("&#60;script&#62;x"));
+}
+
+#[tokio::test]
+async fn feedback_rejects_cross_origin_posts() {
+    let app = app();
+    let req = Request::post("/feedback")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .header(header::ORIGIN, "https://evil.example")
+        .body(Body::from("message=hi"))
+        .unwrap();
+    assert_eq!(send(&app, req).await.status(), StatusCode::FORBIDDEN);
 }

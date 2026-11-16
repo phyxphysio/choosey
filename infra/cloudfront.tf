@@ -39,7 +39,7 @@ resource "aws_cloudfront_function" "viewer_request" {
         };
       }
       var uri = req.uri;
-      if (uri === "/" || uri === "/d" || uri.indexOf("/d/") === 0 || uri.indexOf("/static/") === 0) {
+      if (uri === "/" || uri === "/feedback" || uri === "/d" || uri.indexOf("/d/") === 0 || uri.indexOf("/static/") === 0) {
         return req;
       }
       return {

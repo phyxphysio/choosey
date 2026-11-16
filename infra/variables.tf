@@ -26,8 +26,8 @@ variable "github_oidc_subject_prefix" {
   default     = "repo:phyxphysio@64931554/choosey@1457136940"
 }
 
-variable "budget_alert_email" {
-  description = "Where AWS Budgets sends cost alerts. Set in terraform.tfvars (gitignored)."
+variable "alert_email" {
+  description = "Where cost alerts and feedback notifications go. Set in terraform.tfvars (gitignored)."
   type        = string
   sensitive   = true
 }
