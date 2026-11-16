@@ -118,6 +118,7 @@
 
 <section class="panel">
   <h2>Add a criterion</h2>
+  {% if let Some(a) = added %}<p class="notice" role="status">Added {{ a }}.</p>{% endif %}
   {% if can_add_criterion %}
   <form id="add-criterion" method="post" action="{{ base }}/criteria" class="stack">
     {% let prefix = "new" %}
@@ -169,10 +170,12 @@
 
 <section class="panel">
   <h2>Add an option</h2>
+  {% if let Some(a) = added %}<p class="notice" role="status">Added {{ a }}.</p>{% endif %}
   {% if can_add_option %}
   <form id="add-option" method="post" action="{{ base }}/options" class="stack">
     <label for="new-option-name">Name</label>
-    <input id="new-option-name" name="name" type="text" required maxlength="{{ limits.name }}" placeholder="e.g. 12 Elm Street">
+    {#- autofocus only right after adding (see EditPage::added); htmx also honours it after a swap. -#}
+    <input id="new-option-name" name="name" type="text" required maxlength="{{ limits.name }}" placeholder="e.g. 12 Elm Street"{% if added.is_some() %} autofocus{% endif %}>
     <label for="new-option-notes">Notes <span class="muted">(optional)</span></label>
     <textarea id="new-option-notes" name="notes" rows="2" maxlength="{{ limits.notes }}"></textarea>
     <button type="submit">Add option</button>

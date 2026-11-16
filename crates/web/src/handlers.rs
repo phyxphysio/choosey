@@ -75,6 +75,10 @@ pub struct EditQuery {
     new: Option<String>,
     mode: Option<String>,
     option: Option<String>,
+    /// Id of the criterion or option just added: show "Added …" and put the cursor back in the
+    /// Add form's Name box, ready for the next one. An id rather than the name, so user text never
+    /// goes into a URL; an unknown id is simply ignored.
+    added: Option<String>,
     /// Ranks typed into the "Rank instead" form, one per criterion in criterion order, when the
     /// user pressed "Update suggestions". Not read by serde: the `r.{id}` field names are dynamic,
     /// so [`criteria_page`] parses them separately.
@@ -100,6 +104,7 @@ fn edit_page(
             rank_mode: q.mode.as_deref() == Some("rank"),
             ranks: q.ranks.clone(),
             option: q.option.as_deref(),
+            added: q.added.as_deref(),
             error: error.clone(),
         },
     );
@@ -117,6 +122,8 @@ fn edit_page(
 /// is saved and the step page is shown again with the message (status 422). Otherwise the
 /// decision is written back with a conditional put, so two simultaneous edits can't silently
 /// overwrite each other: the loser gets a "changed elsewhere" page.
+///
+/// On success the browser is sent back to `step` with `redirect_query` (empty, or starting `?`).
 async fn mutate(
     state: &AppState,
     ids: (&str, &str),
@@ -124,28 +131,43 @@ async fn mutate(
     redirect_query: &str,
     change: impl FnOnce(&mut Decision) -> Result<(), InvalidInput>,
 ) -> Result<Response> {
-    mutate_then(state, ids, step, step, redirect_query, change).await
+    let on_error = EditQuery {
+        mode: redirect_query.contains("mode=rank").then(|| "rank".into()),
+        ..Default::default()
+    };
+    mutate_with(state, ids, step, on_error, |d| {
+        change(d)?;
+        Ok((step, redirect_query.to_string()))
+    })
+    .await
 }
 
-/// Like [`mutate`], but on success redirects to `redirect_step` instead of back to `step`.
-/// Errors still re-show `step`, the page the form was on, so the user can fix their input.
-async fn mutate_then(
+/// Like [`mutate`], but `change` also decides where to go on success, as a step and a query
+/// string, so it can use what it just did (the id of a new item, or an option id it checked
+/// against the decision). Errors still re-show `step`, the page the form was on, with `on_error`
+/// as its query, so the user can fix their input.
+async fn mutate_with(
     state: &AppState,
     (view_id, secret): (&str, &str),
     step: Step,
-    redirect_step: Step,
-    redirect_query: &str,
-    change: impl FnOnce(&mut Decision) -> Result<(), InvalidInput>,
+    on_error: EditQuery,
+    change: impl FnOnce(&mut Decision) -> Result<(Step, String), InvalidInput>,
 ) -> Result<Response> {
     let mut d = load_edit(state, view_id, secret).await?;
     let original = d.clone();
-    if let Err(e) = change(&mut d) {
-        let q = EditQuery {
-            mode: redirect_query.contains("mode=rank").then(|| "rank".into()),
-            ..Default::default()
-        };
-        return Ok(edit_page(state, &original, secret, step, &q, Some(e.0)));
-    }
+    let (redirect_step, redirect_query) = match change(&mut d) {
+        Ok(to) => to,
+        Err(e) => {
+            return Ok(edit_page(
+                state,
+                &original,
+                secret,
+                step,
+                &on_error,
+                Some(e.0),
+            ));
+        }
+    };
     let expected = d.bump_version(now());
     state.store.put(&d, expected).await?;
     let to = format!(
@@ -153,6 +175,16 @@ async fn mutate_then(
         edit_path(view_id, secret, redirect_step)
     );
     Ok(Redirect::to(&to).into_response())
+}
+
+/// Where "Add" goes: back to the same step with `?added={id}` (see [`EditQuery::added`]), or on
+/// to `next` when the "Next" button sent the form.
+fn after_add(next: bool, step: Step, next_step: Step, id: &str) -> (Step, String) {
+    if next {
+        (next_step, String::new())
+    } else {
+        (step, format!("?added={id}"))
+    }
 }
 
 /// Value of the `then` field sent by the page's "Next" button.
@@ -451,15 +483,14 @@ pub async fn add_criterion(
     if next && typed_nothing {
         return go_to(&s, (&v, &k), Step::Options).await;
     }
-    let redirect = if next { Step::Options } else { Step::Criteria };
-    mutate_then(&s, (&v, &k), Step::Criteria, redirect, "", |d| {
+    mutate_with(&s, (&v, &k), Step::Criteria, EditQuery::default(), |d| {
         if d.criteria.len() >= MAX_CRITERIA {
             return Err(invalid("You've reached the maximum number of criteria."));
         }
         let name = validate::clean_line("Name", &f.name, MAX_NAME)?;
         let kind = f.parse_kind()?;
-        d.add_criterion(name, kind, 5);
-        Ok(())
+        let id = d.add_criterion(name, kind, 5);
+        Ok(after_add(next, Step::Criteria, Step::Options, &id))
     })
     .await
 }
@@ -609,15 +640,14 @@ pub async fn add_option(
     if next && f.name.trim().is_empty() && f.notes.trim().is_empty() {
         return go_to(&s, (&v, &k), Step::Score).await;
     }
-    let redirect = if next { Step::Score } else { Step::Options };
-    mutate_then(&s, (&v, &k), Step::Options, redirect, "", |d| {
+    mutate_with(&s, (&v, &k), Step::Options, EditQuery::default(), |d| {
         if d.options.len() >= MAX_OPTIONS {
             return Err(invalid("You've reached the maximum number of options."));
         }
         let name = validate::clean_line("Name", &f.name, MAX_NAME)?;
         let notes = validate::clean_text("Notes", &f.notes, MAX_NOTES)?;
-        d.add_option(name, notes);
-        Ok(())
+        let id = d.add_option(name, notes);
+        Ok(after_add(next, Step::Options, Step::Score, &id))
     })
     .await
 }

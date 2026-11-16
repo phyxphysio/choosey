@@ -402,6 +402,10 @@ pub struct EditPage {
     pub view_url: String,
     pub export_href: String,
     pub rank_mode: bool,
+    /// Name of the item just added on this step, if any. When set, the page says "Added …" and the
+    /// Add form's Name box gets `autofocus`, so several items can be added in a row. Only set right
+    /// after an add, because autofocus on an ordinary page load pops up the keyboard on phones.
+    pub added: Option<String>,
     pub criteria: Vec<CriterionRow>,
     pub options: Vec<OptionRow>,
     pub can_add_criterion: bool,
@@ -423,6 +427,8 @@ pub struct EditContext<'a> {
     /// Ranks to preview in rank mode, one per criterion; `None` means the current order.
     pub ranks: Option<Vec<u32>>,
     pub option: Option<&'a str>,
+    /// Id of the criterion or option just added (from `?added=`).
+    pub added: Option<&'a str>,
 }
 
 fn kind_fields(kind: &CriterionKind) -> (&'static str, String, String, String, String, bool) {
@@ -535,6 +541,18 @@ impl EditPage {
             next: (current_index + 1 < d.options.len()).then(|| score_href(current_index + 1)),
         });
 
+        // Look the id up on this step's list, so the name shown is the stored (cleaned) one and an
+        // id from another step or a stale link shows nothing.
+        let added = ctx.added.and_then(|id| match ctx.step {
+            Step::Criteria => d.criterion(id).map(|c| c.name.clone()),
+            Step::Options => d
+                .options
+                .iter()
+                .find(|o| o.id == id)
+                .map(|o| o.name.clone()),
+            Step::Score | Step::Results => None,
+        });
+
         let sheet = d.owner_scores();
         let score_cards = d
             .options
@@ -596,6 +614,7 @@ impl EditPage {
             error: ctx.error,
             is_new: ctx.is_new,
             rank_mode: ctx.rank_mode,
+            added,
             criteria,
             options,
             can_add_criterion: d.criteria.len() < MAX_CRITERIA,

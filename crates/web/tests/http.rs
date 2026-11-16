@@ -160,7 +160,7 @@ async fn full_flow_without_javascript() {
         )
         .await;
         assert_eq!(res.status(), StatusCode::SEE_OTHER);
-        assert_eq!(location(&res), format!("{edit}/options"));
+        assert!(location(&res).starts_with(&format!("{edit}/options?added=o")));
     }
     // The home template has 9 criteria (c1..c9), so options are o10 and o11.
     // c1 = Price (numeric, lower is better, no bounds), c3 = Sun (rated).
@@ -776,4 +776,72 @@ async fn link_boxes_have_copy_buttons() {
     assert!(script.contains("navigator.clipboard") && script.contains("htmx:load"));
     // htmx's own settings are unchanged.
     assert!(results.contains(r#""historyCacheSize":0"#));
+}
+
+/// After "Add", the page comes back with the cursor in the Add form's Name box and says what was
+/// added, so several items can be added in a row. Nowhere else gets autofocus.
+#[tokio::test]
+async fn add_returns_focus_to_the_add_box() {
+    let app = app();
+    let edit = create(&app, "template=blank").await;
+
+    // A fresh page load never autofocuses (it would pop up the keyboard on phones).
+    for page in ["", "/options", "/score", "/results"] {
+        let html = body(get(&app, &format!("{edit}{page}")).await).await;
+        assert!(!html.contains("autofocus"), "{page}");
+    }
+
+    // Criteria: the redirect carries the new id, not the name.
+    let res = post(
+        &app,
+        &format!("{edit}/criteria"),
+        "name=Sea+views&kind=rated",
+    )
+    .await;
+    assert_eq!(location(&res), format!("{edit}?added=c1"));
+    let html = body(get(&app, &location(&res)).await).await;
+    assert!(html.contains(r#"<p class="notice" role="status">Added Sea views.</p>"#));
+    assert!(html.contains(r#"value="" placeholder="e.g. Commute" autofocus>"#));
+    assert_eq!(count(&html, "autofocus"), 1, "only the Add box");
+    assert_csp_clean(&html);
+
+    // Options: the same, and the name is escaped.
+    let res = post(
+        &app,
+        &format!("{edit}/options"),
+        "name=Manly+%3Ci%3Ebeach%3C%2Fi%3E&notes=",
+    )
+    .await;
+    assert_eq!(location(&res), format!("{edit}/options?added=o2"));
+    let html = body(get(&app, &location(&res)).await).await;
+    assert!(html.contains("Added Manly &#60;i&#62;beach&#60;/i&#62;."));
+    assert!(html.contains(r#"placeholder="e.g. 12 Elm Street" autofocus>"#));
+    assert_eq!(count(&html, "autofocus"), 1);
+
+    // Unknown ids, or an id from the other step, show nothing and don't autofocus.
+    for uri in [
+        format!("{edit}/options?added=o999"),
+        format!("{edit}/options?added=c1"),
+        format!("{edit}?added=%3Cb%3E"),
+    ] {
+        let html = body(get(&app, &uri).await).await;
+        assert!(
+            !html.contains("Added ") && !html.contains("autofocus"),
+            "{uri}"
+        );
+    }
+
+    // "Next" with a typed name adds it but moves on, without the flag.
+    let res = post(
+        &app,
+        &format!("{edit}/options"),
+        "then=next&name=Bondi&notes=",
+    )
+    .await;
+    assert_eq!(location(&res), format!("{edit}/score"));
+
+    // A validation error re-shows the form with the message, not the confirmation.
+    let res = post(&app, &format!("{edit}/options"), "name=").await;
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(!body(res).await.contains("Added "));
 }

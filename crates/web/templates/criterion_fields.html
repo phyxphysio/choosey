@@ -1,6 +1,7 @@
-{#- Fields shared by the "add" and "edit" criterion forms. Expects: prefix, name, kind, unit, worst, best. -#}
+{#- Fields shared by the "add" and "edit" criterion forms. Expects: prefix, name, kind, unit, worst, best.
+    The Add form's Name box gets autofocus right after an add (see EditPage::added). -#}
 <label for="cn-{{ prefix }}">Name</label>
-<input id="cn-{{ prefix }}" name="name" type="text" required maxlength="{{ limits.name }}" value="{{ name }}"{% if prefix == "new" %} placeholder="e.g. Commute"{% endif %}>
+<input id="cn-{{ prefix }}" name="name" type="text" required maxlength="{{ limits.name }}" value="{{ name }}"{% if prefix == "new" %} placeholder="e.g. Commute"{% if added.is_some() %} autofocus{% endif %}{% endif %}>
 <label for="ck-{{ prefix }}">How is it scored?</label>
 <select id="ck-{{ prefix }}" name="kind">
   <option value="rated"{% if kind == "rated" %} selected{% endif %}>Rating 0-10</option>
