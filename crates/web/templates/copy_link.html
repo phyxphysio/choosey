@@ -1,0 +1,7 @@
+{#- A read-only link box with a "Copy" button. Expects: copy_id, copy_value.
+    The button starts `hidden` and app.js reveals it, so without JavaScript there's no dead button
+    (the box still selects its text on click with JS, and can be copied by hand without). -#}
+<div class="copy-row">
+  <input id="{{ copy_id }}" class="copy" type="text" readonly value="{{ copy_value }}">
+  <button type="button" class="secondary copy-button" data-copy="{{ copy_id }}" aria-live="polite" hidden>Copy</button>
+</div>

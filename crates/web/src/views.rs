@@ -8,6 +8,7 @@ use askama::Template;
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Response};
 use choosey_core::model::{CriterionKind, Decision, Direction};
+use choosey_core::rank_weights;
 use choosey_core::scoring::{self, ScoreError};
 use choosey_core::templates::TEMPLATES;
 use choosey_core::validate::{MAX_CRITERIA, MAX_NAME, MAX_NOTES, MAX_OPTIONS, MAX_UNIT};
@@ -158,6 +159,11 @@ pub struct ResultRow {
     pub name: String,
     pub total: String,
     pub incomplete: bool,
+    /// "3 of 7 criteria scored": what the incomplete badge says. Counts are easier to read than
+    /// a share of the weight.
+    pub scored: String,
+    /// Share of the weight scored, e.g. "74%". The total depends on this rather than the count
+    /// (a missing heavy criterion matters more), so it's kept as the badge's tooltip.
     pub coverage: String,
     pub segments: Vec<Segment>,
     /// Text alternative for the bar.
@@ -187,6 +193,16 @@ const PALETTE: usize = 8;
 
 fn seg_class(index: usize) -> String {
     format!("seg-{}", index % PALETTE)
+}
+
+/// "3 of 7 criteria scored" (or "0 of 1 criterion scored").
+pub fn criteria_scored(scored: usize, weighted: usize) -> String {
+    let noun = if weighted == 1 {
+        "criterion"
+    } else {
+        "criteria"
+    };
+    format!("{scored} of {weighted} {noun} scored")
 }
 
 /// Format a number for display: one decimal place, without a trailing ".0".
@@ -258,6 +274,7 @@ impl ResultsView {
                     rank: rank + 1,
                     total: r.total.map(fmt1).unwrap_or_else(|| "–".to_string()),
                     incomplete: r.is_incomplete(),
+                    scored: criteria_scored(r.scored_criteria, results.weighted_criteria),
                     coverage: format!("{:.0}%", r.coverage * 100.0),
                     summary: if parts.is_empty() {
                         format!("{name}: no points yet")
@@ -332,7 +349,6 @@ pub struct StepLink {
 
 pub struct CriterionRow {
     pub id: String,
-    pub position: usize,
     pub name: String,
     /// "rated", "higher" or "lower" (the value of the kind `<select>`).
     pub kind: String,
@@ -341,6 +357,12 @@ pub struct CriterionRow {
     pub worst: String,
     pub best: String,
     pub weight: u8,
+    /// The number in this criterion's box in rank mode: its position, or what the user typed when
+    /// previewing ties.
+    pub rank: u32,
+    /// The weight "Apply suggested weights" would give it, shown next to the current weight in
+    /// rank mode so the user sees the result before applying it.
+    pub suggested: u8,
     /// Numeric without bounds: show the min-max warning.
     pub minmax_hint: bool,
     pub is_first: bool,
@@ -370,7 +392,8 @@ pub struct ScoreCell {
     pub value: String,
 }
 
-/// Previous/next links for the one-option-at-a-time score view on small screens.
+/// Previous/next buttons for the one-option-at-a-time score view on small screens. They submit
+/// the scores form (so nothing typed is lost) with `go` set to one of these option ids.
 pub struct ScoreNav {
     pub index: usize,
     pub count: usize,
@@ -396,6 +419,10 @@ pub struct EditPage {
     pub view_url: String,
     pub export_href: String,
     pub rank_mode: bool,
+    /// Name of the item just added on this step, if any. When set, the page says "Added …" and the
+    /// Add form's Name box gets `autofocus`, so several items can be added in a row. Only set right
+    /// after an add, because autofocus on an ordinary page load pops up the keyboard on phones.
+    pub added: Option<String>,
     pub criteria: Vec<CriterionRow>,
     pub options: Vec<OptionRow>,
     pub can_add_criterion: bool,
@@ -414,7 +441,11 @@ pub struct EditContext<'a> {
     pub error: Option<String>,
     pub is_new: bool,
     pub rank_mode: bool,
+    /// Ranks to preview in rank mode, one per criterion; `None` means the current order.
+    pub ranks: Option<Vec<u32>>,
     pub option: Option<&'a str>,
+    /// Id of the criterion or option just added (from `?added=`).
+    pub added: Option<&'a str>,
 }
 
 fn kind_fields(kind: &CriterionKind) -> (&'static str, String, String, String, String, bool) {
@@ -468,6 +499,13 @@ impl EditPage {
             .and_then(|i| Step::ALL.get(i + 1).map(|&s| step_link(i + 1, s)));
 
         let n = d.criteria.len();
+        // Suggested weights are recomputed on every render, so moving a criterion up or down (which
+        // re-renders the page) updates them without any JavaScript.
+        let ranks = ctx
+            .ranks
+            .filter(|r| r.len() == n)
+            .unwrap_or_else(|| (1..=n as u32).collect());
+        let suggested = rank_weights::suggested_weights(&ranks);
         let criteria = d
             .criteria
             .iter()
@@ -476,7 +514,6 @@ impl EditPage {
                 let (kind, kind_label, unit, worst, best, minmax_hint) = kind_fields(&c.kind);
                 CriterionRow {
                     id: c.id.clone(),
-                    position: i + 1,
                     name: c.name.clone(),
                     kind: kind.to_string(),
                     kind_label,
@@ -484,6 +521,8 @@ impl EditPage {
                     worst,
                     best,
                     weight: c.weight,
+                    rank: ranks[i],
+                    suggested: suggested[i],
                     minmax_hint,
                     is_first: i == 0,
                     is_last: i + 1 == n,
@@ -511,12 +550,24 @@ impl EditPage {
             .get(current_index)
             .map(|o| o.id.clone())
             .unwrap_or_default();
-        let score_href = |i: usize| format!("{base}/score?option={}", d.options[i].id);
+        let option_id = |i: usize| d.options[i].id.clone();
         let score_nav = (!d.options.is_empty()).then(|| ScoreNav {
             index: current_index + 1,
             count: d.options.len(),
-            prev: current_index.checked_sub(1).map(score_href),
-            next: (current_index + 1 < d.options.len()).then(|| score_href(current_index + 1)),
+            prev: current_index.checked_sub(1).map(option_id),
+            next: (current_index + 1 < d.options.len()).then(|| option_id(current_index + 1)),
+        });
+
+        // Look the id up on this step's list, so the name shown is the stored (cleaned) one and an
+        // id from another step or a stale link shows nothing.
+        let added = ctx.added.and_then(|id| match ctx.step {
+            Step::Criteria => d.criterion(id).map(|c| c.name.clone()),
+            Step::Options => d
+                .options
+                .iter()
+                .find(|o| o.id == id)
+                .map(|o| o.name.clone()),
+            Step::Score | Step::Results => None,
         });
 
         let sheet = d.owner_scores();
@@ -580,6 +631,7 @@ impl EditPage {
             error: ctx.error,
             is_new: ctx.is_new,
             rank_mode: ctx.rank_mode,
+            added,
             criteria,
             options,
             can_add_criterion: d.criteria.len() < MAX_CRITERIA,
@@ -611,6 +663,8 @@ pub struct ViewPage {
 pub struct TableRow {
     pub name: String,
     pub notes: String,
+    /// "3 of 7 criteria scored, 74% of the weight", or empty if results can't be computed.
+    pub scored: String,
     /// One per criterion: (raw value with unit, normalised 0-10 score), or empty strings.
     pub cells: Vec<(String, String)>,
 }
@@ -633,12 +687,27 @@ impl ViewPage {
                 _ => format!("{}, weight {}", c.name, c.weight),
             })
             .collect();
+        let results = scoring::compute(&d.criteria, &d.options, sheet).ok();
+        let scored = |option_id: &str| {
+            results
+                .as_ref()
+                .and_then(|r| {
+                    let o = r.ranked.iter().find(|o| o.option_id == option_id)?;
+                    Some(format!(
+                        "{}, {:.0}% of the weight",
+                        criteria_scored(o.scored_criteria, r.weighted_criteria),
+                        o.coverage * 100.0
+                    ))
+                })
+                .unwrap_or_default()
+        };
         let rows = d
             .options
             .iter()
             .map(|o| TableRow {
                 name: o.name.clone(),
                 notes: o.notes.clone(),
+                scored: scored(&o.id),
                 cells: d
                     .criteria
                     .iter()
@@ -676,6 +745,8 @@ mod tests {
         assert_eq!(fmt1(72.0), "72");
         assert_eq!(fmt1(72.46), "72.5");
         assert_eq!(fmt1(0.04), "0");
+        assert_eq!(criteria_scored(3, 7), "3 of 7 criteria scored");
+        assert_eq!(criteria_scored(0, 1), "0 of 1 criterion scored");
         assert_eq!(display_name(), "Choosey");
     }
 }

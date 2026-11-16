@@ -36,6 +36,9 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 
+/* Our button styles set `display`, which would otherwise beat the browser's own [hidden] rule. */
+[hidden] { display: none !important; }
+
 html { -webkit-text-size-adjust: 100%; }
 
 body {
@@ -106,6 +109,10 @@ input[type="text"], input[type="number"], select, textarea {
 .row > input[type="text"] { flex: 1 1 12rem; width: auto; }
 textarea { resize: vertical; }
 input.copy { font-family: ui-monospace, Menlo, monospace; font-size: .85rem; }
+.copy-row { display: flex; gap: .5rem; align-items: stretch; margin-bottom: .5rem; }
+.copy-row input.copy { flex: 1 1 auto; min-width: 0; }
+.copy-button { flex: 0 0 auto; min-width: 5.5rem; }
+.copy-button.is-copied { background: var(--accent); color: var(--accent-text); }
 
 button, .button {
   font: inherit;
@@ -120,7 +127,7 @@ button, .button {
   text-decoration: none;
   cursor: pointer;
 }
-.button.secondary { background: transparent; color: var(--accent); }
+.button.secondary, button.secondary { background: transparent; color: var(--accent); }
 button.danger { background: transparent; color: var(--danger); border-color: var(--danger); }
 button.icon { min-width: 2.75rem; padding: .4rem; background: transparent; color: var(--accent); }
 button:disabled { opacity: .4; cursor: default; }
@@ -159,6 +166,7 @@ button:disabled { opacity: .4; cursor: default; }
 .rank-row { display: flex; gap: .5rem; align-items: center; }
 .rank-input { width: 4.5rem !important; flex: 0 0 4.5rem; }
 .rank-name { flex: 1; overflow-wrap: anywhere; }
+.rank-weights { display: block; font-size: .875rem; }
 .rank-buttons { display: flex; gap: .25rem; }
 .item { border-top: 1px solid var(--border); padding: .5rem 0; }
 .item:first-of-type { border-top: 0; }

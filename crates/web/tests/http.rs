@@ -160,7 +160,7 @@ async fn full_flow_without_javascript() {
         )
         .await;
         assert_eq!(res.status(), StatusCode::SEE_OTHER);
-        assert_eq!(location(&res), format!("{edit}/options"));
+        assert!(location(&res).starts_with(&format!("{edit}/options?added=o")));
     }
     // The home template has 9 criteria (c1..c9), so options are o10 and o11.
     // c1 = Price (numeric, lower is better, no bounds), c3 = Sun (rated).
@@ -190,26 +190,39 @@ async fn full_flow_without_javascript() {
     assert!(results.contains("<rect class=\"seg seg-0\""));
     assert_csp_clean(&results);
 
-    // A missing score shows the incomplete badge rather than counting as 0.
+    // A missing score shows the incomplete badge rather than counting as 0. It counts the
+    // weighted criteria (Price and Sun; the seven at weight 0 don't count), with the share of
+    // the weight (Price's 10 of 15) as its tooltip.
     post(&app, &format!("{edit}/scores"), "s.o11.c3=").await;
     let results = body(get(&app, &format!("{edit}/results")).await).await;
     assert!(
-        results.contains("Incomplete: 67% of the weight scored"),
+        results.contains(
+            r#"<p class="badge incomplete" title="The scored criteria carry 67% of the total weight">Incomplete: 1 of 2 criteria scored</p>"#
+        ),
         "{results}"
     );
+    assert_eq!(count(&results, "Incomplete:"), 1, "Elm Street is complete");
+    assert_csp_clean(&results);
 
-    // Read-only view and CSV.
+    // Read-only view: the same badge, plus both numbers in the table. Then the CSV.
     let view = view_path(&edit);
     let res = get(&app, &view).await;
     assert_eq!(res.status(), StatusCode::OK);
     assert_eq!(header_of(&res, "x-robots-tag"), "noindex");
     let html = body(res).await;
     assert!(html.contains("Read-only view") && !html.contains("/edit/"));
+    assert!(html.contains("Incomplete: 1 of 2 criteria scored"));
+    assert!(html.contains("<td>1 of 2 criteria scored, 67% of the weight</td>"));
+    assert!(html.contains("<td>2 of 2 criteria scored, 100% of the weight</td>"));
+    assert_csp_clean(&html);
     let res = get(&app, &format!("{view}/export.csv")).await;
     assert!(header_of(&res, "content-disposition").starts_with("attachment"));
     let csv = body(res).await;
-    assert!(csv.starts_with("Rank,Option"));
-    assert!(csv.contains("1,Elm Street,,80,100,1500,10,"), "{csv}");
+    assert!(csv.starts_with(
+        "Rank,Option,Notes,Total (0-100),Coverage (%),Criteria scored,Criteria weighted,"
+    ));
+    assert!(csv.contains("1,Elm Street,,80,100,2,2,1500,10,"), "{csv}");
+    assert!(csv.contains("2,Park View,,0,67,1,2,2000,0,"), "{csv}");
 }
 
 #[tokio::test]
@@ -241,12 +254,12 @@ async fn blank_decision_criteria_and_ranking() {
         1
     );
 
-    // Rank: Team first, Pay and Commute tied second -> 10, 3, 3 (see core::roc tests).
+    // Rank: Team first, Pay and Commute tied second -> 10, 5, 5 (see core::rank_weights tests).
     let res = post(&app, &format!("{edit}/rank"), "r.c1=2&r.c2=1&r.c3=2").await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     let page = body(get(&app, &edit).await).await;
     assert!(page.contains(
-        "id=\"w-c1\" name=\"w.c1\" type=\"range\" min=\"0\" max=\"10\" step=\"1\" value=\"3\""
+        "id=\"w-c1\" name=\"w.c1\" type=\"range\" min=\"0\" max=\"10\" step=\"1\" value=\"5\""
     ));
     assert!(
         page.contains("name=\"w.c2\" type=\"range\" min=\"0\" max=\"10\" step=\"1\" value=\"10\"")
@@ -652,4 +665,280 @@ async fn feedback_rejects_cross_origin_posts() {
         .body(Body::from("message=hi"))
         .unwrap();
     assert_eq!(send(&app, req).await.status(), StatusCode::FORBIDDEN);
+}
+
+/// Number of times `needle` appears in `haystack`.
+fn count(haystack: &str, needle: &str) -> usize {
+    haystack.matches(needle).count()
+}
+
+/// In rank mode each row shows the weight it would get before "Apply" is pressed, recomputed on
+/// every render: after moving a criterion, and when previewing typed ties.
+#[tokio::test]
+async fn rank_mode_previews_suggested_weights() {
+    let app = app();
+    let edit = create(&app, "template=blank").await;
+    for name in [
+        "Cost",
+        "Family",
+        "Climate",
+        "Community",
+        "Walkability",
+        "Healthcare",
+        "Fun",
+    ] {
+        post(
+            &app,
+            &format!("{edit}/criteria"),
+            &format!("name={name}&kind=rated"),
+        )
+        .await;
+    }
+
+    // Every new criterion starts at weight 5. Seven in order suggest 10, 9, 7, 6, 4, 3, 1.
+    let page = body(get(&app, &format!("{edit}?mode=rank")).await).await;
+    assert_csp_clean(&page);
+    let shown: Vec<&str> = page
+        .match_indices("now 5 → suggested <strong>")
+        .map(|(i, m)| {
+            let rest = &page[i + m.len()..];
+            &rest[..rest.find('<').unwrap()]
+        })
+        .collect();
+    assert_eq!(shown, ["10", "9", "7", "6", "4", "3", "1"]);
+
+    // Moving Fun (c7) up re-renders the page with the suggestion for the new order.
+    post(&app, &format!("{edit}/criteria/c7/up"), "").await;
+    let page = body(get(&app, &format!("{edit}?mode=rank")).await).await;
+    let fun = &page[page.find("r-c7").unwrap()..];
+    assert!(fun.contains(
+        "Fun\n          <span class=\"rank-weights muted\">now 5 → suggested <strong>3</strong>"
+    ));
+
+    // "Update suggestions" sends typed ranks back as a GET: ties share the average, nothing is
+    // saved, and the typed numbers stay in the boxes.
+    let preview = format!("{edit}?mode=rank&r.c1=1&r.c2=1&r.c3=2&r.c4=3&r.c5=4&r.c6=5&r.c7=6");
+    let page = body(get(&app, &preview).await).await;
+    // Cost and Family tied first: (7 + 6) / 2 = 6.5 is the top -> 10; Climate 5 / 6.5 -> 8.
+    assert_eq!(count(&page, "suggested <strong>10</strong>"), 2);
+    assert!(
+        page.contains(
+            r#"name="r.c2" type="number" inputmode="numeric" min="1" max="30" value="1""#
+        )
+    );
+    assert_eq!(count(&page, "now 5 →"), 7, "nothing was saved");
+    // The button that does it is a GET back to this page; the form carries mode=rank.
+    assert!(page.contains(&format!(
+        r#"formmethod="get" formaction="{edit}">Update suggestions"#
+    )));
+    assert!(page.contains(r#"<input type="hidden" name="mode" value="rank">"#));
+
+    // Bad numbers in a preview are ignored (the current order is shown), not an error.
+    let res = get(&app, &format!("{edit}?mode=rank&r.c1=abc")).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(body(res).await.contains("suggested <strong>10</strong>"));
+
+    // Applying the tied ranks sets exactly the previewed weights.
+    let res = post(
+        &app,
+        &format!("{edit}/rank"),
+        "mode=rank&r.c1=1&r.c2=1&r.c3=2&r.c4=3&r.c5=4&r.c6=5&r.c7=6",
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let page = body(get(&app, &format!("{edit}?mode=rank")).await).await;
+    assert_eq!(count(&page, "now 10 → suggested"), 2);
+}
+
+/// Every link box has a Copy button, hidden until our script reveals it, and the script is served
+/// as a separate, cacheable file (the CSP allows no inline JavaScript).
+#[tokio::test]
+async fn link_boxes_have_copy_buttons() {
+    let app = app();
+    let res = post(&app, "/d", "template=blank").await;
+    let new = body(get(&app, &location(&res)).await).await;
+    let edit = location(&res).trim_end_matches("?new=1").to_string();
+    assert!(new.contains(
+        r#"<button type="button" class="secondary copy-button" data-copy="new-edit-url" aria-live="polite" hidden>Copy</button>"#
+    ));
+    assert_csp_clean(&new);
+
+    let results = body(get(&app, &format!("{edit}/results")).await).await;
+    assert_csp_clean(&results);
+    for id in ["view-url", "edit-url"] {
+        assert!(results.contains(&format!(
+            r#"<input id="{id}" class="copy" type="text" readonly"#
+        )));
+        assert!(results.contains(&format!(
+            r#"data-copy="{id}" aria-live="polite" hidden>Copy<"#
+        )));
+    }
+
+    // The script is linked from every page, deferred, under a content-hashed name.
+    let js = results
+        .split('"')
+        .find(|s| s.starts_with("/static/app.") && s.ends_with(".js"))
+        .unwrap()
+        .to_string();
+    assert!(results.contains(&format!(r#"<script src="{js}" defer></script>"#)));
+    let res = get(&app, &js).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(header_of(&res, "content-type").starts_with("text/javascript"));
+    assert_eq!(header_of(&res, "cache-control"), "public, max-age=86400");
+    let script = body(res).await;
+    assert!(script.contains("navigator.clipboard") && script.contains("htmx:load"));
+    // htmx's own settings are unchanged.
+    assert!(results.contains(r#""historyCacheSize":0"#));
+}
+
+/// After "Add", the page comes back with the cursor in the Add form's Name box and says what was
+/// added, so several items can be added in a row. Nowhere else gets autofocus.
+#[tokio::test]
+async fn add_returns_focus_to_the_add_box() {
+    let app = app();
+    let edit = create(&app, "template=blank").await;
+
+    // A fresh page load never autofocuses (it would pop up the keyboard on phones).
+    for page in ["", "/options", "/score", "/results"] {
+        let html = body(get(&app, &format!("{edit}{page}")).await).await;
+        assert!(!html.contains("autofocus"), "{page}");
+    }
+
+    // Criteria: the redirect carries the new id, not the name.
+    let res = post(
+        &app,
+        &format!("{edit}/criteria"),
+        "name=Sea+views&kind=rated",
+    )
+    .await;
+    assert_eq!(location(&res), format!("{edit}?added=c1"));
+    let html = body(get(&app, &location(&res)).await).await;
+    assert!(html.contains(r#"<p class="notice" role="status">Added Sea views.</p>"#));
+    assert!(html.contains(r#"value="" placeholder="e.g. Commute" autofocus>"#));
+    assert_eq!(count(&html, "autofocus"), 1, "only the Add box");
+    assert_csp_clean(&html);
+
+    // Options: the same, and the name is escaped.
+    let res = post(
+        &app,
+        &format!("{edit}/options"),
+        "name=Manly+%3Ci%3Ebeach%3C%2Fi%3E&notes=",
+    )
+    .await;
+    assert_eq!(location(&res), format!("{edit}/options?added=o2"));
+    let html = body(get(&app, &location(&res)).await).await;
+    assert!(html.contains("Added Manly &#60;i&#62;beach&#60;/i&#62;."));
+    assert!(html.contains(r#"placeholder="e.g. 12 Elm Street" autofocus>"#));
+    assert_eq!(count(&html, "autofocus"), 1);
+
+    // Unknown ids, or an id from the other step, show nothing and don't autofocus.
+    for uri in [
+        format!("{edit}/options?added=o999"),
+        format!("{edit}/options?added=c1"),
+        format!("{edit}?added=%3Cb%3E"),
+    ] {
+        let html = body(get(&app, &uri).await).await;
+        assert!(
+            !html.contains("Added ") && !html.contains("autofocus"),
+            "{uri}"
+        );
+    }
+
+    // "Next" with a typed name adds it but moves on, without the flag.
+    let res = post(
+        &app,
+        &format!("{edit}/options"),
+        "then=next&name=Bondi&notes=",
+    )
+    .await;
+    assert_eq!(location(&res), format!("{edit}/score"));
+
+    // A validation error re-shows the form with the message, not the confirmation.
+    let res = post(&app, &format!("{edit}/options"), "name=").await;
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(!body(res).await.contains("Added "));
+}
+
+/// Regression test: on phones the Score step shows one option at a time, and its Previous/Next
+/// were plain links, so scores typed with JavaScript off were lost. They now submit the form.
+#[tokio::test]
+async fn score_previous_next_save_before_moving() {
+    let app = app();
+    let edit = create(&app, "template=blank").await;
+    post(&app, &format!("{edit}/criteria"), "name=Sun&kind=rated").await; // c1
+    for name in ["A", "B", "C"] {
+        post(&app, &format!("{edit}/options"), &format!("name={name}")).await; // o2, o3, o4
+    }
+
+    // The middle option has both buttons; each submits the scores form with its target in `go`.
+    let page = body(get(&app, &format!("{edit}/score?option=o3")).await).await;
+    assert_csp_clean(&page);
+    assert!(page.contains("Option 2 of 3"));
+    let prev = r#"<button type="submit" class="secondary" form="scores" name="go" value="o2""#;
+    let next = r#"<button type="submit" class="secondary" form="scores" name="go" value="o4""#;
+    assert!(page.contains(prev) && page.contains(next));
+    assert!(!page.contains("score?option="), "no plain links any more");
+    // With JS they post the form themselves and swap the whole page, outside the <form> so they
+    // don't inherit its live-results target, waiting for any auto-save in flight.
+    let at = page.find(next).unwrap();
+    let tag = &page[at..at + page[at..].find('>').unwrap()];
+    for attr in [
+        format!(r#"hx-post="{edit}/scores""#),
+        r#"hx-target="body""#.to_string(),
+        r#"hx-push-url="true""#.to_string(),
+        r##"hx-sync="#scores:queue last""##.to_string(),
+    ] {
+        assert!(tag.contains(&attr), "{attr} in {tag}");
+    }
+    let form = page.find(r#"<form id="scores""#).unwrap();
+    assert!(at < form, "nav buttons live outside the form");
+    // Enter in a score box must save, not jump: the first submit button for the form is a
+    // plain save button, ahead of Previous/Next.
+    let default = page
+        .find(r#"<button type="submit" form="scores" class="visually-hidden""#)
+        .unwrap();
+    assert!(default < page.find(prev).unwrap());
+
+    // No-JS "Next": the typed score is saved, then the next option is shown.
+    let res = post(
+        &app,
+        &format!("{edit}/scores"),
+        "option=o3&s.o3.c1=7.5&go=o4",
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    assert_eq!(location(&res), format!("{edit}/score?option=o4"));
+    let page = body(get(&app, &location(&res)).await).await;
+    assert!(page.contains("Option 3 of 3"));
+    assert!(page.contains(r#"name="s.o3.c1" type="number" inputmode="decimal" min="0" max="10" step="0.5" value="7.5""#));
+
+    // "Previous" works the same way.
+    let res = post(&app, &format!("{edit}/scores"), "option=o4&s.o4.c1=2&go=o3").await;
+    assert_eq!(location(&res), format!("{edit}/score?option=o3"));
+
+    // An unknown or malicious target falls back to the first option.
+    for go in ["o999", "c1", "%2F%2Fevil.example", ""] {
+        let res = post(
+            &app,
+            &format!("{edit}/scores"),
+            &format!("option=o3&go={go}"),
+        )
+        .await;
+        assert_eq!(location(&res), format!("{edit}/score?option=o2"), "{go}");
+    }
+
+    // An invalid score isn't saved and the error is shown on the option being edited.
+    let res = post(
+        &app,
+        &format!("{edit}/scores"),
+        "option=o4&s.o4.c1=11&go=o2",
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let html = body(res).await;
+    assert!(html.contains("Option 3 of 3") && html.contains(r#"role="alert""#));
+
+    // Without `go` ("Save scores" or htmx's auto-save) it stays on the current option.
+    let res = post(&app, &format!("{edit}/scores"), "option=o4&s.o4.c1=3").await;
+    assert_eq!(location(&res), format!("{edit}/score?option=o4"));
 }

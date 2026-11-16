@@ -6,7 +6,8 @@
   <h2>Bookmark this link. It's the only way back in.</h2>
   <p>Anyone with this link can edit this decision. There are no accounts and no way to recover it.</p>
   <label for="new-edit-url">Your edit link</label>
-  <input id="new-edit-url" class="copy" type="text" readonly value="{{ edit_url }}">
+  {% let copy_id = "new-edit-url" %}{% let copy_value = edit_url.as_str() %}
+  {% include "copy_link.html" %}
 </section>
 {% endif %}
 
@@ -46,14 +47,17 @@
   {% if rank_mode %}
   {# Rank mode: order with up/down buttons (no drag and drop), tie by giving equal numbers. #}
   <form id="rank" method="post" action="{{ base }}/rank" class="stack">
-    <p class="muted">Put the most important first. Give two criteria the same number to tie them. Then apply the
-      suggested weights and fine-tune with the sliders.</p>
+    <p class="muted">Put the most important first. Give two criteria the same number to tie them. Each row shows its
+      weight now and the weight it would get. Apply the suggested weights, then fine-tune with the sliders.</p>
+    {#- Only used by "Update suggestions" (a GET back to this page); the POST handlers ignore it. -#}
+    <input type="hidden" name="mode" value="rank">
     <ol class="rank-list">
       {% for c in criteria %}
       <li class="rank-row">
         <label class="visually-hidden" for="r-{{ c.id }}">Rank of {{ c.name }}</label>
-        <input id="r-{{ c.id }}" class="rank-input" name="r.{{ c.id }}" type="number" inputmode="numeric" min="1" max="{{ limits.criteria }}" value="{{ c.position }}">
-        <span class="rank-name">{{ c.name }} <span class="muted">(weight {{ c.weight }})</span></span>
+        <input id="r-{{ c.id }}" class="rank-input" name="r.{{ c.id }}" type="number" inputmode="numeric" min="1" max="{{ limits.criteria }}" value="{{ c.rank }}">
+        <span class="rank-name">{{ c.name }}
+          <span class="rank-weights muted">now {{ c.weight }} → suggested <strong>{{ c.suggested }}</strong></span></span>
         <span class="rank-buttons">
           <button type="submit" class="icon" formaction="{{ base }}/criteria/{{ c.id }}/up" {% if c.is_first %}disabled{% endif %} aria-label="Move {{ c.name }} up">↑</button>
           <button type="submit" class="icon" formaction="{{ base }}/criteria/{{ c.id }}/down" {% if c.is_last %}disabled{% endif %} aria-label="Move {{ c.name }} down">↓</button>
@@ -61,7 +65,11 @@
       </li>
       {% endfor %}
     </ol>
-    <button type="submit">Apply suggested weights</button>
+    <div class="row">
+      <button type="submit">Apply suggested weights</button>
+      {#- Previews the suggestion for typed numbers (ties) without saving anything. -#}
+      <button type="submit" class="secondary" formmethod="get" formaction="{{ base }}">Update suggestions</button>
+    </div>
   </form>
   {% else %}
   {# Sliders. With JS, htmx saves on every change and re-renders the form so the numbers update. #}
@@ -110,6 +118,7 @@
 
 <section class="panel">
   <h2>Add a criterion</h2>
+  {% if let Some(a) = added %}<p class="notice" role="status">Added {{ a }}.</p>{% endif %}
   {% if can_add_criterion %}
   <form id="add-criterion" method="post" action="{{ base }}/criteria" class="stack">
     {% let prefix = "new" %}
@@ -161,10 +170,12 @@
 
 <section class="panel">
   <h2>Add an option</h2>
+  {% if let Some(a) = added %}<p class="notice" role="status">Added {{ a }}.</p>{% endif %}
   {% if can_add_option %}
   <form id="add-option" method="post" action="{{ base }}/options" class="stack">
     <label for="new-option-name">Name</label>
-    <input id="new-option-name" name="name" type="text" required maxlength="{{ limits.name }}" placeholder="e.g. 12 Elm Street">
+    {#- autofocus only right after adding (see EditPage::added); htmx also honours it after a swap. -#}
+    <input id="new-option-name" name="name" type="text" required maxlength="{{ limits.name }}" placeholder="e.g. 12 Elm Street"{% if added.is_some() %} autofocus{% endif %}>
     <label for="new-option-notes">Notes <span class="muted">(optional)</span></label>
     <textarea id="new-option-notes" name="notes" rows="2" maxlength="{{ limits.notes }}"></textarea>
     <button type="submit">Add option</button>
@@ -187,11 +198,37 @@
     you don't know yet: it won't count as zero.</p>
 
   {% if let Some(nav) = score_nav %}
-  {# On small screens only one option is shown at a time; these links move between them. #}
+  {#- On small screens only one option is shown at a time; these buttons move between them.
+
+      They are submit buttons of the scores form (linked with `form="scores"`), sending
+      `go` = the option to show, so scores typed without JavaScript are saved before moving
+      (see save_scores in handlers.rs, which redirects to /score?option=<go>).
+
+      With JavaScript, they must navigate rather than just refresh the results panel. The form's
+      own hx-post (trigger "change, submit") swaps only #live-results, so a plain submit would save
+      but stay on the same option. Instead each button has its own hx-post: htmx then handles the
+      click on the button, cancels the native submit (so the form's handler never fires), sends
+      the form's fields plus the button's `go`, and swaps the whole page like boosted navigation
+      (target body, push the redirected URL, scroll to the top). Living outside the <form> keeps
+      them from inheriting its hx-target/hx-select. hx-sync waits for any auto-save the form
+      already has in flight (blurring a box fires "change" just before the click), so the two
+      writes can't race and hit the "changed elsewhere" conflict. -#}
+  {#- Pressing Enter in a score box "clicks" the form's default button: the first submit button
+      for the form in page order. Previous/Next come before the form, so without this they'd be
+      the default and Enter would jump to another option. This one comes first and just saves,
+      like "Save scores". It's rendered (not display:none) so every browser uses it, but it's
+      off-screen, out of the tab order and hidden from screen readers. -#}
+  <button type="submit" form="scores" class="visually-hidden" tabindex="-1" aria-hidden="true">Save scores</button>
   <nav class="score-nav" aria-label="Options">
-    {% if let Some(p) = nav.prev %}<a href="{{ p }}">← Previous</a>{% else %}<span></span>{% endif %}
+    {% if let Some(p) = nav.prev -%}
+    <button type="submit" class="secondary" form="scores" name="go" value="{{ p }}"
+            hx-post="{{ base }}/scores" hx-target="body" hx-swap="innerHTML show:window:top" hx-push-url="true" hx-sync="#scores:queue last">← Previous</button>
+    {%- else %}<span></span>{% endif %}
     <span>Option {{ nav.index }} of {{ nav.count }}</span>
-    {% if let Some(n) = nav.next %}<a href="{{ n }}">Next →</a>{% else %}<span></span>{% endif %}
+    {% if let Some(n) = nav.next -%}
+    <button type="submit" class="secondary" form="scores" name="go" value="{{ n }}"
+            hx-post="{{ base }}/scores" hx-target="body" hx-swap="innerHTML show:window:top" hx-push-url="true" hx-sync="#scores:queue last">Next →</button>
+    {%- else %}<span></span>{% endif %}
   </nav>
   {% endif %}
 
@@ -240,9 +277,11 @@
 <section class="panel">
   <h2>Share</h2>
   <label for="view-url">View-only link: safe to share, nobody can change anything with it</label>
-  <input id="view-url" class="copy" type="text" readonly value="{{ view_url }}">
+  {% let copy_id = "view-url" %}{% let copy_value = view_url.as_str() %}
+  {% include "copy_link.html" %}
   <label for="edit-url">Your edit link: keep it private</label>
-  <input id="edit-url" class="copy" type="text" readonly value="{{ edit_url }}">
+  {% let copy_id = "edit-url" %}{% let copy_value = edit_url.as_str() %}
+  {% include "copy_link.html" %}
   <p><a class="button secondary" href="{{ export_href }}" hx-boost="false" download>Download CSV</a></p>
 </section>
 

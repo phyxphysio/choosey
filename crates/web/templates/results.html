@@ -11,7 +11,7 @@
       <span class="total">{{ r.total }}</span>
     </div>
     {% if r.incomplete %}
-    <p class="badge incomplete">Incomplete: {{ r.coverage }} of the weight scored</p>
+    <p class="badge incomplete" title="The scored criteria carry {{ r.coverage }} of the total weight">Incomplete: {{ r.scored }}</p>
     {% endif %}
     {#- Breakdown bar: SVG geometry attributes, not inline styles (see Segment in views.rs). -#}
     <svg class="bar" viewBox="0 0 100 10" preserveAspectRatio="none" role="img" aria-label="{{ r.summary }}">

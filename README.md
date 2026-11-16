@@ -5,11 +5,12 @@ A weighted decision-matrix web app to help get past analysis paralysis. List wha
 with a breakdown of what drove each score.
 
 - Start blank or from a template (rent/buy a home, where to retire, job offer).
-- Set weights with sliders, or rank the criteria and get suggested weights (Rank Order Centroid).
+- Set weights with sliders, or rank the criteria and see suggested weights (rank-sum) before applying them.
 - Score as a 0-10 rating, or enter real numbers (price, minutes) that are scaled automatically,
   either between fixed "worst" and "best" bounds or min-max across your options.
 - Missing scores never count as zero: totals use only what's been scored, and an "incomplete"
-  badge shows how much of the weight is covered.
+  badge says how many of the weighted criteria are scored (e.g. "3 of 7 criteria scored"), with
+  the share of the weight they carry in its tooltip and in the read-only view's table.
 - No accounts. Each decision has a private edit link and a separate view-only link. Export to CSV.
 
 Works without JavaScript (plain forms); with JavaScript, htmx updates results as you type.
@@ -35,8 +36,9 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-- `crates/core`: scoring maths with hand-calculated examples, ROC weights for n = 1..6 with ties,
-  and property tests (totals stay in [0, 100]; scaling every weight changes nothing).
+- `crates/core`: scoring maths with hand-calculated examples, rank-sum weights for n = 1..7 with
+  ties, and property tests (totals stay in [0, 100]; scaling every weight changes nothing;
+  suggested weights are 1-10 and never increase as rank falls).
 - `crates/store`: a shared conformance check run against each backend.
 - `crates/web/tests/http.rs`: the HTTP flows, driven in-process with `tower::ServiceExt::oneshot`,
   including security headers, CSP-clean HTML, validation, 404s and Origin/secret checks.
@@ -80,7 +82,7 @@ The app name lives in one place, `choosey_core::APP_NAME`.
 ## Architecture
 
 ```
-crates/core    domain types, scoring, ROC, templates, validation (pure: no async, no I/O)
+crates/core    domain types, scoring, rank weights, templates, validation (pure: no async, no I/O)
 crates/store   Store trait; MemoryStore; DynamoStore (one item per decision)
 crates/web     axum app, askama templates, static assets, main.rs (binary `choosey`)
 infra/         Terraform (AWS + Cloudflare)
@@ -90,8 +92,8 @@ infra/         Terraform (AWS + Cloudflare)
 - **One binary, two modes.** If `AWS_LAMBDA_RUNTIME_API` is set, `main.rs` runs the router under
   `lambda_http` (Lambda Function URL, `provided.al2023`, arm64); otherwise it serves
   `127.0.0.1:3000`.
-- **Web.** axum + askama (templates compiled into the binary, auto-escaped) + htmx 2 (vendored)
-  and hand-written CSS. Static files are embedded with `include_bytes!` and served under
+- **Web.** axum + askama (templates compiled into the binary, auto-escaped) + htmx 2 (vendored),
+  hand-written CSS and a small hand-written `app.js` (Copy buttons for links; hidden without JS). Static files are embedded with `include_bytes!` and served under
   content-versioned names. Every change is a POST that redirects back to a GET page; htmx makes the
   same requests in the background and swaps in the relevant fragment (`hx-select`).
 - **Data.** Each decision is one DynamoDB item: `pk = "DEC#<view_id>"` plus the serde

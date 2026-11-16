@@ -2,14 +2,14 @@
 //!
 //! - [`model`]: the stored data (decisions, criteria, options, raw scores).
 //! - [`scoring`]: normalisation, weighted totals, coverage and ranking.
-//! - [`roc`]: suggested weights from a ranking (Rank Order Centroid).
+//! - [`rank_weights`]: suggested weights from a ranking (rank-sum).
 //! - [`templates`]: built-in starting points.
 //! - [`ids`]: base62 ids and edit-secret hashing.
 //! - [`validate`]: input limits and cleaning.
 
 pub mod ids;
 pub mod model;
-pub mod roc;
+pub mod rank_weights;
 pub mod scoring;
 pub mod templates;
 pub mod validate;

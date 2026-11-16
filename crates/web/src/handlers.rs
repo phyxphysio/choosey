@@ -13,7 +13,7 @@ use choosey_core::validate::{
     self, InvalidInput, MAX_CONTACT, MAX_CRITERIA, MAX_FEEDBACK, MAX_NAME, MAX_NOTES, MAX_OPTIONS,
     MAX_UNIT,
 };
-use choosey_core::{roc, templates};
+use choosey_core::{rank_weights, templates};
 use rand::TryRng;
 use rand::rngs::SysRng;
 use serde::Deserialize;
@@ -75,6 +75,15 @@ pub struct EditQuery {
     new: Option<String>,
     mode: Option<String>,
     option: Option<String>,
+    /// Id of the criterion or option just added: show "Added …" and put the cursor back in the
+    /// Add form's Name box, ready for the next one. An id rather than the name, so user text never
+    /// goes into a URL; an unknown id is simply ignored.
+    added: Option<String>,
+    /// Ranks typed into the "Rank instead" form, one per criterion in criterion order, when the
+    /// user pressed "Update suggestions". Not read by serde: the `r.{id}` field names are dynamic,
+    /// so [`criteria_page`] parses them separately.
+    #[serde(skip)]
+    ranks: Option<Vec<u32>>,
 }
 
 fn edit_page(
@@ -93,7 +102,9 @@ fn edit_page(
             step,
             is_new: q.new.is_some() && step == Step::Criteria,
             rank_mode: q.mode.as_deref() == Some("rank"),
+            ranks: q.ranks.clone(),
             option: q.option.as_deref(),
+            added: q.added.as_deref(),
             error: error.clone(),
         },
     );
@@ -111,6 +122,8 @@ fn edit_page(
 /// is saved and the step page is shown again with the message (status 422). Otherwise the
 /// decision is written back with a conditional put, so two simultaneous edits can't silently
 /// overwrite each other: the loser gets a "changed elsewhere" page.
+///
+/// On success the browser is sent back to `step` with `redirect_query` (empty, or starting `?`).
 async fn mutate(
     state: &AppState,
     ids: (&str, &str),
@@ -118,28 +131,43 @@ async fn mutate(
     redirect_query: &str,
     change: impl FnOnce(&mut Decision) -> Result<(), InvalidInput>,
 ) -> Result<Response> {
-    mutate_then(state, ids, step, step, redirect_query, change).await
+    let on_error = EditQuery {
+        mode: redirect_query.contains("mode=rank").then(|| "rank".into()),
+        ..Default::default()
+    };
+    mutate_with(state, ids, step, on_error, |d| {
+        change(d)?;
+        Ok((step, redirect_query.to_string()))
+    })
+    .await
 }
 
-/// Like [`mutate`], but on success redirects to `redirect_step` instead of back to `step`.
-/// Errors still re-show `step`, the page the form was on, so the user can fix their input.
-async fn mutate_then(
+/// Like [`mutate`], but `change` also decides where to go on success, as a step and a query
+/// string, so it can use what it just did (the id of a new item, or an option id it checked
+/// against the decision). Errors still re-show `step`, the page the form was on, with `on_error`
+/// as its query, so the user can fix their input.
+async fn mutate_with(
     state: &AppState,
     (view_id, secret): (&str, &str),
     step: Step,
-    redirect_step: Step,
-    redirect_query: &str,
-    change: impl FnOnce(&mut Decision) -> Result<(), InvalidInput>,
+    on_error: EditQuery,
+    change: impl FnOnce(&mut Decision) -> Result<(Step, String), InvalidInput>,
 ) -> Result<Response> {
     let mut d = load_edit(state, view_id, secret).await?;
     let original = d.clone();
-    if let Err(e) = change(&mut d) {
-        let q = EditQuery {
-            mode: redirect_query.contains("mode=rank").then(|| "rank".into()),
-            ..Default::default()
-        };
-        return Ok(edit_page(state, &original, secret, step, &q, Some(e.0)));
-    }
+    let (redirect_step, redirect_query) = match change(&mut d) {
+        Ok(to) => to,
+        Err(e) => {
+            return Ok(edit_page(
+                state,
+                &original,
+                secret,
+                step,
+                &on_error,
+                Some(e.0),
+            ));
+        }
+    };
     let expected = d.bump_version(now());
     state.store.put(&d, expected).await?;
     let to = format!(
@@ -147,6 +175,16 @@ async fn mutate_then(
         edit_path(view_id, secret, redirect_step)
     );
     Ok(Redirect::to(&to).into_response())
+}
+
+/// Where "Add" goes: back to the same step with `?added={id}` (see [`EditQuery::added`]), or on
+/// to `next` when the "Next" button sent the form.
+fn after_add(next: bool, step: Step, next_step: Step, id: &str) -> (Step, String) {
+    if next {
+        (next_step, String::new())
+    } else {
+        (step, format!("?added={id}"))
+    }
 }
 
 /// Value of the `then` field sent by the page's "Next" button.
@@ -274,12 +312,23 @@ async fn show(
 }
 
 /// `GET /d/{view_id}/edit/{secret}` (also `/criteria`)
+///
+/// In rank mode, the "Update suggestions" button submits the rank form here as a GET, with
+/// `r.{criterion_id}` fields, so the page can preview the weights those ranks (including ties)
+/// would give before anything is saved.
 pub async fn criteria_page(
     State(s): State<AppState>,
-    Path(p): EditPath,
-    Query(q): Query<EditQuery>,
+    Path((view_id, secret)): EditPath,
+    Query(mut q): Query<EditQuery>,
+    Query(pairs): Query<Vec<(String, String)>>,
 ) -> Result<Response> {
-    show(s, p, Step::Criteria, q).await
+    let d = load_edit(&s, &view_id, &secret).await?;
+    if q.mode.as_deref() == Some("rank") && pairs.iter().any(|(k, _)| k.starts_with("r.")) {
+        // Only a preview, so bad numbers are ignored rather than reported: the page then
+        // shows the suggestion for the current order.
+        q.ranks = parse_ranks(&d, &pairs).ok();
+    }
+    Ok(edit_page(&s, &d, &secret, Step::Criteria, &q, None))
 }
 
 /// `GET /d/{view_id}/edit/{secret}/options`
@@ -434,15 +483,14 @@ pub async fn add_criterion(
     if next && typed_nothing {
         return go_to(&s, (&v, &k), Step::Options).await;
     }
-    let redirect = if next { Step::Options } else { Step::Criteria };
-    mutate_then(&s, (&v, &k), Step::Criteria, redirect, "", |d| {
+    mutate_with(&s, (&v, &k), Step::Criteria, EditQuery::default(), |d| {
         if d.criteria.len() >= MAX_CRITERIA {
             return Err(invalid("You've reached the maximum number of criteria."));
         }
         let name = validate::clean_line("Name", &f.name, MAX_NAME)?;
         let kind = f.parse_kind()?;
-        d.add_criterion(name, kind, 5);
-        Ok(())
+        let id = d.add_criterion(name, kind, 5);
+        Ok(after_add(next, Step::Criteria, Step::Options, &id))
     })
     .await
 }
@@ -527,31 +575,40 @@ pub async fn save_weights(
     .await
 }
 
+/// Read `r.{criterion_id}` = rank fields into one rank per criterion, in criterion order
+/// (1 = most important, equal numbers tie). A criterion missing from the fields keeps its current
+/// position as its rank; fields for unknown criteria are ignored.
+fn parse_ranks(d: &Decision, pairs: &[(String, String)]) -> Result<Vec<u32>, InvalidInput> {
+    let mut ranks: Vec<u32> = (1..=d.criteria.len() as u32).collect();
+    for (key, value) in pairs {
+        if let Some(cid) = key.strip_prefix("r.")
+            && let Some(i) = d.criteria.iter().position(|c| c.id == cid)
+        {
+            ranks[i] = value
+                .trim()
+                .parse::<u32>()
+                .ok()
+                .filter(|r| (1..=1000).contains(r))
+                .ok_or_else(|| invalid("Ranks must be whole numbers, 1 for the most important."))?;
+        }
+    }
+    Ok(ranks)
+}
+
 /// `POST .../rank`: fields `r.{criterion_id}` = rank (1 = most important, equal numbers tie).
-/// Sets every weight from Rank Order Centroid suggestions.
+/// Sets every weight from the rank-sum suggestions (see `choosey_core::rank_weights`).
 pub async fn apply_rank(
     State(s): State<AppState>,
     Path((v, k)): EditPath,
     Form(pairs): Pairs,
 ) -> Result<Response> {
     mutate(&s, (&v, &k), Step::Criteria, "", |d| {
-        // Default to the current order for any criterion missing from the form.
-        let mut ranks: Vec<u32> = (1..=d.criteria.len() as u32).collect();
-        for (key, value) in &pairs {
-            if let Some(cid) = key.strip_prefix("r.")
-                && let Some(i) = d.criteria.iter().position(|c| c.id == cid)
-            {
-                ranks[i] = value
-                    .trim()
-                    .parse::<u32>()
-                    .ok()
-                    .filter(|r| (1..=1000).contains(r))
-                    .ok_or_else(|| {
-                        invalid("Ranks must be whole numbers, 1 for the most important.")
-                    })?;
-            }
-        }
-        for (c, w) in d.criteria.iter_mut().zip(roc::roc_weights(&ranks)) {
+        let ranks = parse_ranks(d, &pairs)?;
+        for (c, w) in d
+            .criteria
+            .iter_mut()
+            .zip(rank_weights::suggested_weights(&ranks))
+        {
             c.weight = w;
         }
         Ok(())
@@ -583,15 +640,14 @@ pub async fn add_option(
     if next && f.name.trim().is_empty() && f.notes.trim().is_empty() {
         return go_to(&s, (&v, &k), Step::Score).await;
     }
-    let redirect = if next { Step::Score } else { Step::Options };
-    mutate_then(&s, (&v, &k), Step::Options, redirect, "", |d| {
+    mutate_with(&s, (&v, &k), Step::Options, EditQuery::default(), |d| {
         if d.options.len() >= MAX_OPTIONS {
             return Err(invalid("You've reached the maximum number of options."));
         }
         let name = validate::clean_line("Name", &f.name, MAX_NAME)?;
         let notes = validate::clean_text("Notes", &f.notes, MAX_NOTES)?;
-        d.add_option(name, notes);
-        Ok(())
+        let id = d.add_option(name, notes);
+        Ok(after_add(next, Step::Options, Step::Score, &id))
     })
     .await
 }
@@ -632,22 +688,36 @@ pub async fn delete_option(
 
 /// `POST .../scores`: fields `s.{option_id}.{criterion_id}` = value (empty clears it), plus
 /// `option` = the option shown on small screens, so the redirect returns to it.
+///
+/// On small screens the Score step shows one option at a time. Its "← Previous" and "Next →"
+/// buttons submit this same form with `go` = the option to show next, so scores typed without
+/// JavaScript are saved before moving (they used to be plain links, which dropped them). `go` is
+/// checked against the decision's options; an unknown id falls back to the first option.
 pub async fn save_scores(
     State(s): State<AppState>,
     Path((v, k)): EditPath,
     Form(pairs): Pairs,
 ) -> Result<Response> {
+    let field = |name: &str| {
+        pairs
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, v)| v.as_str())
+    };
     // Only echo back an option id that looks like one of ours (`o` + digits).
-    let option = pairs
-        .iter()
-        .find(|(key, _)| key == "option")
-        .map(|(_, v)| v.as_str())
+    let option = field("option")
         .filter(|v| {
             v.len() <= 8 && v.starts_with('o') && v[1..].bytes().all(|b| b.is_ascii_digit())
-        });
-    let query = option.map(|o| format!("?option={o}")).unwrap_or_default();
+        })
+        .map(str::to_string);
+    let go = field("go").map(str::to_string);
+    // If a score is invalid, show the error on the option the user was looking at.
+    let on_error = EditQuery {
+        option: option.clone(),
+        ..Default::default()
+    };
 
-    mutate(&s, (&v, &k), Step::Score, &query, |d| {
+    mutate_with(&s, (&v, &k), Step::Score, on_error, |d| {
         for (key, value) in &pairs {
             let Some((oid, cid)) = key.strip_prefix("s.").and_then(|rest| rest.split_once('.'))
             else {
@@ -673,7 +743,19 @@ pub async fn save_scores(
                 }
             }
         }
-        Ok(())
+        // Previous/Next: the requested option if it's one of ours, else the first. Otherwise
+        // ("Save scores", or htmx's auto-save) stay on the option that was shown.
+        let show = match go {
+            Some(go) => d
+                .options
+                .iter()
+                .find(|o| o.id == go)
+                .or(d.options.first())
+                .map(|o| o.id.clone()),
+            None => option,
+        };
+        let query = show.map(|o| format!("?option={o}")).unwrap_or_default();
+        Ok((Step::Score, query))
     })
     .await
 }
