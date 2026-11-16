@@ -159,6 +159,11 @@ pub struct ResultRow {
     pub name: String,
     pub total: String,
     pub incomplete: bool,
+    /// "3 of 7 criteria scored": what the incomplete badge says. Counts are easier to read than
+    /// a share of the weight.
+    pub scored: String,
+    /// Share of the weight scored, e.g. "74%". The total depends on this rather than the count
+    /// (a missing heavy criterion matters more), so it's kept as the badge's tooltip.
     pub coverage: String,
     pub segments: Vec<Segment>,
     /// Text alternative for the bar.
@@ -188,6 +193,16 @@ const PALETTE: usize = 8;
 
 fn seg_class(index: usize) -> String {
     format!("seg-{}", index % PALETTE)
+}
+
+/// "3 of 7 criteria scored" (or "0 of 1 criterion scored").
+pub fn criteria_scored(scored: usize, weighted: usize) -> String {
+    let noun = if weighted == 1 {
+        "criterion"
+    } else {
+        "criteria"
+    };
+    format!("{scored} of {weighted} {noun} scored")
 }
 
 /// Format a number for display: one decimal place, without a trailing ".0".
@@ -259,6 +274,7 @@ impl ResultsView {
                     rank: rank + 1,
                     total: r.total.map(fmt1).unwrap_or_else(|| "–".to_string()),
                     incomplete: r.is_incomplete(),
+                    scored: criteria_scored(r.scored_criteria, results.weighted_criteria),
                     coverage: format!("{:.0}%", r.coverage * 100.0),
                     summary: if parts.is_empty() {
                         format!("{name}: no points yet")
@@ -647,6 +663,8 @@ pub struct ViewPage {
 pub struct TableRow {
     pub name: String,
     pub notes: String,
+    /// "3 of 7 criteria scored, 74% of the weight", or empty if results can't be computed.
+    pub scored: String,
     /// One per criterion: (raw value with unit, normalised 0-10 score), or empty strings.
     pub cells: Vec<(String, String)>,
 }
@@ -669,12 +687,27 @@ impl ViewPage {
                 _ => format!("{}, weight {}", c.name, c.weight),
             })
             .collect();
+        let results = scoring::compute(&d.criteria, &d.options, sheet).ok();
+        let scored = |option_id: &str| {
+            results
+                .as_ref()
+                .and_then(|r| {
+                    let o = r.ranked.iter().find(|o| o.option_id == option_id)?;
+                    Some(format!(
+                        "{}, {:.0}% of the weight",
+                        criteria_scored(o.scored_criteria, r.weighted_criteria),
+                        o.coverage * 100.0
+                    ))
+                })
+                .unwrap_or_default()
+        };
         let rows = d
             .options
             .iter()
             .map(|o| TableRow {
                 name: o.name.clone(),
                 notes: o.notes.clone(),
+                scored: scored(&o.id),
                 cells: d
                     .criteria
                     .iter()
@@ -712,6 +745,8 @@ mod tests {
         assert_eq!(fmt1(72.0), "72");
         assert_eq!(fmt1(72.46), "72.5");
         assert_eq!(fmt1(0.04), "0");
+        assert_eq!(criteria_scored(3, 7), "3 of 7 criteria scored");
+        assert_eq!(criteria_scored(0, 1), "0 of 1 criterion scored");
         assert_eq!(display_name(), "Choosey");
     }
 }

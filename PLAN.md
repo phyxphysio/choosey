@@ -35,6 +35,9 @@ Criterion kinds:
 Total for option o, counting only the criteria it has a score for (C_o):
   `total_o = 100 * Σ_{i∈C_o} w_i * s_oi / Σ_{i∈C_o} (w_i * 10)`
 - Also return coverage: `Σ_{i∈C_o} w_i / Σ_all w_i`. If coverage is below 100%, show an "incomplete" badge.
+  The badge counts criteria rather than weight ("3 of 7 criteria scored", counting only criteria with a
+  non-zero weight), since that's easier to understand; the coverage figure stays available as its tooltip,
+  in the read-only table and in the CSV, because it's what the total depends on.
   Missing scores must never count as 0 without the user seeing it. (The original spreadsheet treated blanks as 0,
   and that was a bug.)
 - Return a per-criterion contribution for each option, `w_i * s_oi / Σ_all(w_i * 10) * 100`, for a stacked

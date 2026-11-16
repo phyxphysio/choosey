@@ -27,8 +27,12 @@ pub struct OptionResult {
     /// scored on any criterion that has a non-zero weight.
     pub total: Option<f64>,
     /// Share of the total weight (0.0-1.0) that this option has scores for. Below 1.0 means the
-    /// total is based on incomplete information and the UI must say so.
+    /// total is based on incomplete information and the UI must say so. This is what the total
+    /// actually depends on, and it breaks ties in the ranking.
     pub coverage: f64,
+    /// How many of the weighted (non-zero weight) criteria this option has a score for. Out of
+    /// [`Results::weighted_criteria`]; easier to read than `coverage` ("3 of 7 criteria scored").
+    pub scored_criteria: usize,
     /// One entry per criterion, in criterion order.
     pub per_criterion: Vec<CriterionResult>,
 }
@@ -56,6 +60,8 @@ pub struct CriterionResult {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Results {
     pub ranked: Vec<OptionResult>,
+    /// Number of criteria with a non-zero weight: the ones that count.
+    pub weighted_criteria: usize,
 }
 
 /// Normalise one raw value with fixed bounds: `10 * clamp((x - worst) / (best - worst), 0, 1)`.
@@ -156,6 +162,7 @@ pub fn compute(
         .map(|option| {
             let mut earned = 0.0; // Σ w * s over scored criteria
             let mut scored_weight = 0.0; // Σ w over scored criteria
+            let mut scored_criteria = 0; // scored criteria with w > 0
             let per_criterion = criteria
                 .iter()
                 .zip(&normalised)
@@ -166,6 +173,9 @@ pub fn compute(
                         Some(s) => {
                             earned += w * s;
                             scored_weight += w;
+                            if c.weight > 0 {
+                                scored_criteria += 1;
+                            }
                             w * s / (total_weight * 10.0) * 100.0
                         }
                         None => 0.0,
@@ -181,6 +191,7 @@ pub fn compute(
                 option_id: option.id.clone(),
                 total: (scored_weight > 0.0).then(|| 100.0 * earned / (scored_weight * 10.0)),
                 coverage: scored_weight / total_weight,
+                scored_criteria,
                 per_criterion,
             }
         })
@@ -206,7 +217,11 @@ pub fn compute(
             })
     });
 
-    Ok(Results { ranked })
+    let weighted_criteria = criteria.iter().filter(|c| c.weight > 0).count();
+    Ok(Results {
+        ranked,
+        weighted_criteria,
+    })
 }
 
 /// Compare optional numbers so that higher values come first and `None` comes last.
@@ -414,14 +429,17 @@ mod tests {
         approx(a.total.unwrap(), 60.0);
         approx(a.coverage, 1.0);
         assert!(!a.is_incomplete());
+        assert_eq!((a.scored_criteria, r.weighted_criteria), (2, 2));
         approx(b.total.unwrap(), 50.0);
         approx(b.coverage, 0.6);
         assert!(b.is_incomplete());
+        assert_eq!(b.scored_criteria, 1);
         assert_eq!(b.per_criterion[1].score, None);
         approx(b.per_criterion[1].contribution, 0.0);
         // C has no scores at all: no total, zero coverage, ranked last.
         assert_eq!(c.total, None);
         approx(c.coverage, 0.0);
+        assert_eq!(c.scored_criteria, 0);
         assert_eq!(r.ranked.last().unwrap().option_id, d.options[2].id);
     }
 
@@ -435,9 +453,12 @@ mod tests {
             &["A"],
         );
         set(&mut d, 0, 0, 7.0);
+        set(&mut d, 0, 1, 3.0);
         let r = results(&d);
         approx(r.ranked[0].total.unwrap(), 70.0);
         approx(r.ranked[0].coverage, 1.0);
+        // A score on a weight-0 criterion isn't counted as a scored criterion either.
+        assert_eq!((r.ranked[0].scored_criteria, r.weighted_criteria), (1, 1));
     }
 
     #[test]
@@ -587,6 +608,9 @@ mod tests {
                             prop_assert!((0.0..=100.0 + 1e-9).contains(&t), "total {t}");
                         }
                         prop_assert!((0.0..=1.0 + 1e-12).contains(&o.coverage));
+                        // The count and the weight share agree on whether anything is missing.
+                        prop_assert!(o.scored_criteria <= r.weighted_criteria);
+                        prop_assert_eq!(o.is_incomplete(), o.scored_criteria < r.weighted_criteria);
                         let bar: f64 = o.per_criterion.iter().map(|c| c.contribution).sum();
                         prop_assert!((0.0..=100.0 + 1e-9).contains(&bar), "bar {bar}");
                     }

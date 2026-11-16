@@ -26,6 +26,8 @@ pub fn to_csv(d: &Decision) -> Result<Vec<u8>, csv::Error> {
         "Notes".to_string(),
         "Total (0-100)".to_string(),
         "Coverage (%)".to_string(),
+        "Criteria scored".to_string(),
+        "Criteria weighted".to_string(),
     ];
     for c in &d.criteria {
         let unit = match &c.kind {
@@ -41,8 +43,8 @@ pub fn to_csv(d: &Decision) -> Result<Vec<u8>, csv::Error> {
     w.write_record(&header)?;
 
     // If results can't be computed (no criteria, all weights 0) still export the options.
-    let ranked = scoring::compute(&d.criteria, &d.options, sheet)
-        .map(|r| r.ranked)
+    let (ranked, weighted) = scoring::compute(&d.criteria, &d.options, sheet)
+        .map(|r| (r.ranked, r.weighted_criteria))
         .unwrap_or_default();
     let order: Vec<(Option<usize>, &choosey_core::model::OptionItem)> = if ranked.is_empty() {
         d.options.iter().map(|o| (None, o)).collect()
@@ -69,6 +71,10 @@ pub fn to_csv(d: &Decision) -> Result<Vec<u8>, csv::Error> {
             result
                 .map(|r| format!("{:.0}", r.coverage * 100.0))
                 .unwrap_or_default(),
+            result
+                .map(|r| r.scored_criteria.to_string())
+                .unwrap_or_default(),
+            result.map(|_| weighted.to_string()).unwrap_or_default(),
         ];
         for (ci, c) in d.criteria.iter().enumerate() {
             row.push(
@@ -109,6 +115,8 @@ mod tests {
         assert!(csv.contains("\"'=HYPERLINK(\"\"x\"\")\""), "{csv}");
         assert!(csv.contains("\"line1\nline2\""));
         assert!(csv.contains(",7.5,7.5"), "{csv}");
+        // Rank, option, notes, total, coverage, criteria scored of weighted.
+        assert!(csv.contains(",75,100,1,1,7.5,"), "{csv}");
         assert!(csv.starts_with("Rank,Option"));
     }
 }

@@ -190,26 +190,39 @@ async fn full_flow_without_javascript() {
     assert!(results.contains("<rect class=\"seg seg-0\""));
     assert_csp_clean(&results);
 
-    // A missing score shows the incomplete badge rather than counting as 0.
+    // A missing score shows the incomplete badge rather than counting as 0. It counts the
+    // weighted criteria (Price and Sun; the seven at weight 0 don't count), with the share of
+    // the weight (Price's 10 of 15) as its tooltip.
     post(&app, &format!("{edit}/scores"), "s.o11.c3=").await;
     let results = body(get(&app, &format!("{edit}/results")).await).await;
     assert!(
-        results.contains("Incomplete: 67% of the weight scored"),
+        results.contains(
+            r#"<p class="badge incomplete" title="The scored criteria carry 67% of the total weight">Incomplete: 1 of 2 criteria scored</p>"#
+        ),
         "{results}"
     );
+    assert_eq!(count(&results, "Incomplete:"), 1, "Elm Street is complete");
+    assert_csp_clean(&results);
 
-    // Read-only view and CSV.
+    // Read-only view: the same badge, plus both numbers in the table. Then the CSV.
     let view = view_path(&edit);
     let res = get(&app, &view).await;
     assert_eq!(res.status(), StatusCode::OK);
     assert_eq!(header_of(&res, "x-robots-tag"), "noindex");
     let html = body(res).await;
     assert!(html.contains("Read-only view") && !html.contains("/edit/"));
+    assert!(html.contains("Incomplete: 1 of 2 criteria scored"));
+    assert!(html.contains("<td>1 of 2 criteria scored, 67% of the weight</td>"));
+    assert!(html.contains("<td>2 of 2 criteria scored, 100% of the weight</td>"));
+    assert_csp_clean(&html);
     let res = get(&app, &format!("{view}/export.csv")).await;
     assert!(header_of(&res, "content-disposition").starts_with("attachment"));
     let csv = body(res).await;
-    assert!(csv.starts_with("Rank,Option"));
-    assert!(csv.contains("1,Elm Street,,80,100,1500,10,"), "{csv}");
+    assert!(csv.starts_with(
+        "Rank,Option,Notes,Total (0-100),Coverage (%),Criteria scored,Criteria weighted,"
+    ));
+    assert!(csv.contains("1,Elm Street,,80,100,2,2,1500,10,"), "{csv}");
+    assert!(csv.contains("2,Park View,,0,67,1,2,2000,0,"), "{csv}");
 }
 
 #[tokio::test]

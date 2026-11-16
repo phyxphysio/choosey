@@ -9,7 +9,8 @@ with a breakdown of what drove each score.
 - Score as a 0-10 rating, or enter real numbers (price, minutes) that are scaled automatically,
   either between fixed "worst" and "best" bounds or min-max across your options.
 - Missing scores never count as zero: totals use only what's been scored, and an "incomplete"
-  badge shows how much of the weight is covered.
+  badge says how many of the weighted criteria are scored (e.g. "3 of 7 criteria scored"), with
+  the share of the weight they carry in its tooltip and in the read-only view's table.
 - No accounts. Each decision has a private edit link and a separate view-only link. Export to CSV.
 
 Works without JavaScript (plain forms); with JavaScript, htmx updates results as you type.
