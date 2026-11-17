@@ -19,6 +19,7 @@ use rand::rngs::SysRng;
 use serde::Deserialize;
 
 use crate::app::AppState;
+use crate::captcha::Verdict;
 use crate::error::AppError;
 use crate::export;
 use crate::views::{EditContext, EditPage, FeedbackPage, HomePage, Step, ViewPage, render};
@@ -769,8 +770,14 @@ pub struct FeedbackQuery {
 }
 
 /// `GET /feedback`
-pub async fn feedback_page(Query(q): Query<FeedbackQuery>) -> Response {
-    let page = FeedbackPage::new(q.sent.is_some(), None, String::new(), String::new());
+pub async fn feedback_page(State(s): State<AppState>, Query(q): Query<FeedbackQuery>) -> Response {
+    let page = FeedbackPage::new(
+        q.sent.is_some(),
+        None,
+        String::new(),
+        String::new(),
+        s.captcha.site_key(),
+    );
     render(&page, StatusCode::OK)
 }
 
@@ -783,6 +790,9 @@ pub struct FeedbackForm {
     /// Honeypot: hidden from people (see `.hp` in app.css) but bots tend to fill in every field.
     #[serde(default)]
     website: String,
+    /// Added by Cloudflare Turnstile's script (see [`crate::captcha`]).
+    #[serde(default, rename = "cf-turnstile-response")]
+    turnstile_token: String,
 }
 
 /// `POST /feedback`: save the message, then tell the owner (best effort).
@@ -810,12 +820,23 @@ pub async fn send_feedback(
         });
     let (message, contact) = match cleaned {
         Ok(v) => v,
-        Err(e) => {
-            // Show the form again with what they typed, so nothing is lost.
-            let page = FeedbackPage::new(false, Some(e.0), f.message, f.contact);
-            return Ok(render(&page, StatusCode::UNPROCESSABLE_ENTITY));
+        Err(e) => return Ok(feedback_error(&s, e.0, f.message, f.contact)),
+    };
+
+    // Bot check last, so a typo doesn't use up the person's one-time token for nothing.
+    let problem = match s.captcha.check(&f.turnstile_token).await {
+        Verdict::Human => None,
+        Verdict::NotHuman => Some(
+            "We couldn't confirm you're a person. Please complete the check below and send again.",
+        ),
+        Verdict::Unavailable => {
+            Some("We couldn't run the spam check just now. Please wait a minute and send again.")
         }
     };
+    if let Some(problem) = problem {
+        tracing::info!("feedback failed the bot check; not saved");
+        return Ok(feedback_error(&s, problem.into(), f.message, f.contact));
+    }
 
     let feedback = Feedback {
         id: random_id()?,
@@ -828,4 +849,10 @@ pub async fn send_feedback(
     tracing::info!(id_prefix = &feedback.id[..4], "feedback saved");
     s.notifier.feedback(&feedback).await;
     Ok(thanks())
+}
+
+/// Show the form again with an error and what they typed, so nothing is lost.
+fn feedback_error(s: &AppState, error: String, message: String, contact: String) -> Response {
+    let page = FeedbackPage::new(false, Some(error), message, contact, s.captcha.site_key());
+    render(&page, StatusCode::UNPROCESSABLE_ENTITY)
 }

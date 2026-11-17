@@ -7,7 +7,7 @@
       historyCacheSize 0 stops htmx copying pages (and their secret edit URLs) into localStorage.
       Error responses are swapped too, so validation messages show up. -#}
   <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"historyCacheSize":0,"refreshOnHistoryMiss":true,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"[45]..","swap":true,"error":true}]}'>
-  <meta name="referrer" content="no-referrer">
+  <meta name="referrer" content="{% block referrer %}no-referrer{% endblock %}">
   <title>{% block title %}{% endblock %} · {{ app }}</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/static/{{ assets.css }}">
@@ -24,7 +24,7 @@
   </main>
   <footer class="site-footer">
     <p>{{ app }} helps you weigh up options. No accounts: whoever has a link can use it.</p>
-    <p><a href="/feedback">Send feedback</a></p>
+    <p><a href="/feedback" hx-boost="false">Send feedback</a></p>
   </footer>
 </body>
 </html>

@@ -126,10 +126,18 @@ pub struct FeedbackPage {
     pub contact: String,
     pub max_message: usize,
     pub max_contact: usize,
+    /// Cloudflare Turnstile site key; when set the page shows the bot-check widget.
+    pub turnstile_site_key: Option<String>,
 }
 
 impl FeedbackPage {
-    pub fn new(sent: bool, error: Option<String>, message: String, contact: String) -> Self {
+    pub fn new(
+        sent: bool,
+        error: Option<String>,
+        message: String,
+        contact: String,
+        turnstile_site_key: Option<&str>,
+    ) -> Self {
         Self {
             app: display_name(),
             assets: &ASSETS,
@@ -139,6 +147,7 @@ impl FeedbackPage {
             contact,
             max_message: choosey_core::validate::MAX_FEEDBACK,
             max_contact: choosey_core::validate::MAX_CONTACT,
+            turnstile_site_key: turnstile_site_key.map(String::from),
         }
     }
 }

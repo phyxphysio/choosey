@@ -19,6 +19,13 @@ pub const ORIGIN_VERIFY_HEADER: &str = "x-origin-verify";
 pub const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; \
 form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'";
 
+/// The feedback page's CSP: [`CSP`] plus Cloudflare Turnstile, whose script draws the bot check in
+/// an iframe. Only this page loads anything from another site.
+pub const CSP_FEEDBACK: &str = "default-src 'self'; \
+script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; \
+style-src 'self'; img-src 'self' data:; \
+form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'";
+
 /// Reject requests that didn't come through CloudFront.
 ///
 /// The Lambda Function URL has auth type `NONE` (CloudFront's signed-origin feature would require
@@ -78,10 +85,23 @@ pub async fn response_headers(State(state): State<AppState>, req: Request, next:
     let status = res.status();
     let h = res.headers_mut();
 
-    set(h, header::CONTENT_SECURITY_POLICY, CSP);
+    let csp = if path == "/feedback" {
+        CSP_FEEDBACK
+    } else {
+        CSP
+    };
+    set(h, header::CONTENT_SECURITY_POLICY, csp);
     set(h, header::X_CONTENT_TYPE_OPTIONS, "nosniff");
-    // No referrer anywhere, so secret edit links never leak to other sites.
-    set(h, header::REFERRER_POLICY, "no-referrer");
+    // No referrer anywhere, so secret edit links never leak to other sites. The feedback page is
+    // the exception: its form is a plain (non-htmx) POST, and under `no-referrer` browsers send
+    // `Origin: null`, which `check_post_origin` rejects. Its URL holds no secret, and
+    // `same-origin` still sends nothing to other sites (such as Turnstile's iframe).
+    let referrer = if path == "/feedback" {
+        "same-origin"
+    } else {
+        "no-referrer"
+    };
+    set(h, header::REFERRER_POLICY, referrer);
     set(
         h,
         HeaderName::from_static("permissions-policy"),

@@ -8,6 +8,7 @@ use axum::middleware::{from_fn, from_fn_with_state};
 use axum::routing::{get, post};
 use choosey_store::Store;
 
+use crate::captcha::Captcha;
 use crate::notify::Notifier;
 use tower_http::limit::RequestBodyLimitLayer;
 
@@ -25,6 +26,8 @@ pub struct AppState {
     pub store: Arc<dyn Store>,
     pub config: Arc<Config>,
     pub notifier: Arc<dyn Notifier>,
+    /// Bot check for the feedback form.
+    pub captcha: Arc<dyn Captcha>,
 }
 
 /// Build the router with all middleware.

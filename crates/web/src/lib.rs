@@ -4,6 +4,7 @@
 
 pub mod app;
 mod assets;
+pub mod captcha;
 pub mod config;
 mod error;
 mod export;

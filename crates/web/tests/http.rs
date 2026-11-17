@@ -7,6 +7,7 @@ use axum::body::Body;
 use axum::http::{Request, Response, StatusCode, header};
 use choosey_store::MemoryStore;
 use choosey_web::app::{AppState, router};
+use choosey_web::captcha::NoCaptcha;
 use choosey_web::config::Config;
 use choosey_web::notify::NoopNotifier;
 use http_body_util::BodyExt;
@@ -17,6 +18,7 @@ fn app_with(config: Config) -> Router {
         store: Arc::new(MemoryStore::new()),
         config: Arc::new(config),
         notifier: Arc::new(NoopNotifier),
+        captcha: Arc::new(NoCaptcha),
     })
 }
 
@@ -593,6 +595,7 @@ async fn feedback_is_saved_and_notified() {
         store: store.clone(),
         config: Arc::new(Config::for_tests()),
         notifier: notifier.clone(),
+        captcha: Arc::new(NoCaptcha),
     });
 
     // Every page links to the form, and the form itself is CSP-clean.
@@ -665,6 +668,126 @@ async fn feedback_rejects_cross_origin_posts() {
         .body(Body::from("message=hi"))
         .unwrap();
     assert_eq!(send(&app, req).await.status(), StatusCode::FORBIDDEN);
+}
+
+/// A bot check with a fixed answer, which remembers the tokens it was given.
+struct FakeCaptcha {
+    verdict: choosey_web::captcha::Verdict,
+    tokens: std::sync::Mutex<Vec<String>>,
+}
+
+#[async_trait::async_trait]
+impl choosey_web::captcha::Captcha for FakeCaptcha {
+    fn site_key(&self) -> Option<&str> {
+        Some("test-site-key")
+    }
+    async fn check(&self, token: &str) -> choosey_web::captcha::Verdict {
+        self.tokens.lock().unwrap().push(token.to_string());
+        self.verdict
+    }
+}
+
+fn app_with_captcha(
+    verdict: choosey_web::captcha::Verdict,
+) -> (Router, Arc<MemoryStore>, Arc<FakeCaptcha>) {
+    let store = Arc::new(MemoryStore::new());
+    let captcha = Arc::new(FakeCaptcha {
+        verdict,
+        tokens: Default::default(),
+    });
+    let app = router(AppState {
+        store: store.clone(),
+        config: Arc::new(Config::for_tests()),
+        notifier: Arc::new(NoopNotifier),
+        captcha: captcha.clone(),
+    });
+    (app, store, captcha)
+}
+
+#[tokio::test]
+async fn feedback_page_shows_turnstile_and_allows_it_in_csp() {
+    use choosey_web::captcha::Verdict;
+    let (app, _, _) = app_with_captcha(Verdict::Human);
+    let res = get(&app, "/feedback").await;
+    let csp = header_of(&res, "content-security-policy").to_string();
+    // A plain form POST under `no-referrer` sends `Origin: null`, which we'd reject.
+    assert_eq!(header_of(&res, "referrer-policy"), "same-origin");
+    assert!(csp.contains("script-src 'self' https://challenges.cloudflare.com"));
+    assert!(csp.contains("frame-src https://challenges.cloudflare.com"));
+    let page = body(res).await;
+    assert!(page.contains(r#"data-sitekey="test-site-key""#));
+    assert!(page.contains("https://challenges.cloudflare.com/turnstile/v0/api.js"));
+    // htmx wouldn't run the widget's script after a boosted swap, so these are full page loads.
+    assert!(
+        page.contains(r#"<form method="post" action="/feedback" class="stack" hx-boost="false">"#)
+    );
+    assert!(page.contains(r#"<a href="/feedback" hx-boost="false">"#));
+    assert_csp_clean(&page);
+
+    assert!(page.contains(r#"<meta name="referrer" content="same-origin">"#));
+
+    // Every other page keeps the strict policies.
+    let home = get(&app, "/").await;
+    assert!(!header_of(&home, "content-security-policy").contains("cloudflare"));
+    assert_eq!(header_of(&home, "referrer-policy"), "no-referrer");
+    assert!(
+        body(home)
+            .await
+            .contains(r#"<meta name="referrer" content="no-referrer">"#)
+    );
+
+    // Without keys (local development) there's no widget at all.
+    let plain = body(get(&self::app(), "/feedback").await).await;
+    assert!(!plain.contains("cf-turnstile") && !plain.contains("challenges.cloudflare.com"));
+}
+
+#[tokio::test]
+async fn feedback_needs_to_pass_the_bot_check() {
+    use choosey_web::captcha::Verdict;
+
+    // A person: the token is checked and the feedback saved.
+    let (app, store, captcha) = app_with_captcha(Verdict::Human);
+    let res = post(
+        &app,
+        "/feedback",
+        "message=Nice+app&cf-turnstile-response=tok123",
+    )
+    .await;
+    assert_eq!(location(&res), "/feedback?sent=1");
+    assert_eq!(store.feedback().len(), 1);
+    assert_eq!(captcha.tokens.lock().unwrap().as_slice(), ["tok123"]);
+
+    // A bot: nothing saved, the form comes back with what they typed and a clear message.
+    let (app, store, _) = app_with_captcha(Verdict::NotHuman);
+    let res = post(
+        &app,
+        "/feedback",
+        "message=List+your+site&contact=spam%40x.test",
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let html = body(res).await;
+    assert!(
+        html.contains("confirm you&#39;re a person")
+            || html.contains("confirm you&#x27;re a person"),
+        "{html}"
+    );
+    assert!(html.contains("List your site") && html.contains(r#"value="spam@x.test""#));
+    assert!(html.contains(r#"data-sitekey="test-site-key""#));
+    assert!(store.feedback().is_empty());
+
+    // Cloudflare unreachable: fail closed, but say it's our problem.
+    let (app, store, _) = app_with_captcha(Verdict::Unavailable);
+    let res = post(&app, "/feedback", "message=Hello&cf-turnstile-response=t").await;
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(body(res).await.contains("spam check just now"));
+    assert!(store.feedback().is_empty());
+
+    // Validation errors are reported before the token is spent.
+    let (app, _, captcha) = app_with_captcha(Verdict::Human);
+    let res = post(&app, "/feedback", "message=+++&cf-turnstile-response=t").await;
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(captcha.tokens.lock().unwrap().is_empty());
 }
 
 /// Number of times `needle` appears in `haystack`.

@@ -85,6 +85,8 @@ resource "aws_lambda_function" "app" {
       ORIGIN_VERIFY_SECRET = random_password.origin_verify.result
       RUST_LOG             = "info"
       FEEDBACK_TOPIC_ARN   = aws_sns_topic.feedback.arn
+      TURNSTILE_SITE_KEY   = cloudflare_turnstile_widget.feedback.sitekey
+      TURNSTILE_SECRET_KEY = cloudflare_turnstile_widget.feedback.secret
     }
   }
 
