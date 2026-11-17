@@ -6,6 +6,9 @@
 //! | `TABLE_NAME`           | DynamoDB table (required when `STORE=dynamo`).                 |
 //! | `PUBLIC_BASE_URL`      | e.g. `https://choosey.app`. Used for absolute links and the Origin check. Default `http://127.0.0.1:3000`. |
 //! | `ORIGIN_VERIFY_SECRET` | Shared secret CloudFront sends in `x-origin-verify`. Required in Lambda. |
+//! | `FEEDBACK_TOPIC_ARN`   | SNS topic that emails the owner about feedback. Optional.      |
+//! | `TURNSTILE_SITE_KEY`   | Cloudflare Turnstile public key for the feedback form. Optional; set both or neither. |
+//! | `TURNSTILE_SECRET_KEY` | Turnstile secret key, used to verify tokens with Cloudflare.   |
 //! | `RUST_LOG`             | Log filter, default `info`.                                    |
 
 use axum::http::Uri;
@@ -34,6 +37,17 @@ pub struct Config {
     pub hsts: bool,
     /// SNS topic for feedback notifications. Unset locally: feedback is saved but nobody is told.
     pub feedback_topic_arn: Option<String>,
+    /// Cloudflare Turnstile keys for the feedback form. Unset locally: no bot check.
+    pub turnstile: Option<TurnstileKeys>,
+}
+
+/// The pair of Turnstile keys. Both are needed, so they're kept together.
+#[derive(Clone)]
+pub struct TurnstileKeys {
+    /// Public: it's in the page's HTML.
+    pub site_key: String,
+    /// Private: only ever sent to Cloudflare.
+    pub secret_key: String,
 }
 
 // Hand-written so the secret can never end up in a log line via `{:?}`.
@@ -48,6 +62,10 @@ impl std::fmt::Debug for Config {
             )
             .field("hsts", &self.hsts)
             .field("feedback_topic_arn", &self.feedback_topic_arn)
+            .field(
+                "turnstile_site_key",
+                &self.turnstile.as_ref().map(|t| &t.site_key),
+            )
             .finish()
     }
 }
@@ -98,6 +116,19 @@ impl Config {
             return Err("ORIGIN_VERIFY_SECRET must be set when running in Lambda".into());
         }
 
+        let turnstile = match (get("TURNSTILE_SITE_KEY"), get("TURNSTILE_SECRET_KEY")) {
+            (Some(site_key), Some(secret_key)) => Some(TurnstileKeys {
+                site_key,
+                secret_key,
+            }),
+            (None, None) => None,
+            _ => {
+                return Err(
+                    "set both TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY, or neither".into(),
+                );
+            }
+        };
+
         Ok(Self {
             store,
             hsts: scheme == "https",
@@ -105,6 +136,7 @@ impl Config {
             public_origin,
             origin_verify_secret,
             feedback_topic_arn: get("FEEDBACK_TOPIC_ARN"),
+            turnstile,
         })
     }
 
@@ -118,6 +150,28 @@ impl Config {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn turnstile_keys_come_as_a_pair() {
+        let with = |pairs: &[(&str, &str)]| {
+            let map: HashMap<String, String> = pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            Config::from_lookup(false, |k| map.get(k).cloned())
+        };
+        assert!(with(&[]).unwrap().turnstile.is_none());
+        let both = with(&[
+            ("TURNSTILE_SITE_KEY", "site"),
+            ("TURNSTILE_SECRET_KEY", "shh"),
+        ])
+        .unwrap();
+        assert_eq!(both.turnstile.as_ref().unwrap().site_key, "site");
+        // The secret never appears in the debug output that's logged at startup.
+        assert!(!format!("{both:?}").contains("shh"));
+        assert!(with(&[("TURNSTILE_SITE_KEY", "site")]).is_err());
+        assert!(with(&[("TURNSTILE_SECRET_KEY", "shh")]).is_err());
+    }
 
     fn cfg(lambda: bool, vars: &[(&str, &str)]) -> Result<Config, String> {
         let map: HashMap<String, String> = vars

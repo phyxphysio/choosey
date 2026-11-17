@@ -13,3 +13,15 @@ resource "aws_sns_topic_subscription" "feedback_email" {
   protocol  = "email"
   endpoint  = var.alert_email
 }
+
+# Cloudflare Turnstile: a free, usually invisible "are you a person?" check on the feedback form,
+# added after bots got past the honeypot field. The app sends each token to Cloudflare with the
+# secret key to verify it (see crates/web/src/captcha.rs). Needs the Cloudflare API token to have
+# the "Account > Turnstile > Edit" permission.
+resource "cloudflare_turnstile_widget" "feedback" {
+  account_id = data.cloudflare_zone.this.account.id
+  name       = "${var.app_name} feedback"
+  domains    = [var.domain, local.www_domain]
+  # Cloudflare decides whether to show a checkbox; most people never see one.
+  mode = "managed"
+}

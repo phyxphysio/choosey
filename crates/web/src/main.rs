@@ -8,11 +8,18 @@ use std::sync::Arc;
 
 use choosey_store::{DynamoStore, MemoryStore, Store};
 use choosey_web::app::{AppState, router};
+use choosey_web::captcha::{Captcha, NoCaptcha, Turnstile};
 use choosey_web::config::{Config, StoreKind};
 use choosey_web::notify::{NoopNotifier, Notifier, SnsNotifier};
 use tracing_subscriber::EnvFilter;
 
 const LOCAL_ADDR: &str = "127.0.0.1:3000";
+
+/// `https://choosey.app` -> `choosey.app` (any port dropped).
+fn public_host(origin: &str) -> String {
+    let rest = origin.split_once("://").map_or(origin, |(_, r)| r);
+    rest.split(':').next().unwrap_or(rest).to_string()
+}
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -44,10 +51,32 @@ async fn main() -> ExitCode {
         None => Arc::new(NoopNotifier),
     };
 
+    let captcha: Arc<dyn Captcha> = match &config.turnstile {
+        Some(keys) => {
+            // In Lambda, insist the token was solved on our own site. Locally Cloudflare's test
+            // keys report example.com, so skip that check.
+            let host = in_lambda.then(|| public_host(&config.public_origin));
+            match Turnstile::new(keys.site_key.clone(), keys.secret_key.clone(), host) {
+                Ok(t) => Arc::new(t),
+                Err(e) => {
+                    tracing::error!("{e}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+        None => {
+            if in_lambda {
+                tracing::warn!("Turnstile keys not set: the feedback form has no bot check");
+            }
+            Arc::new(NoCaptcha)
+        }
+    };
+
     let app = router(AppState {
         store,
         config: Arc::new(config),
         notifier,
+        captcha,
     });
 
     let result = if in_lambda {

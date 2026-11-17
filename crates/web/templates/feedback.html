@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Feedback{% endblock %}
+{#- See the Referrer-Policy note in middleware.rs: a plain form POST needs a real Origin. -#}
+{% block referrer %}same-origin{% endblock %}
 {% block main %}
 <section class="panel">
   <h1>Send feedback</h1>
@@ -10,7 +12,9 @@
   <p class="muted">Something confusing, broken or missing? Ideas are welcome too. This goes straight
     to the person who made {{ app }}. Please don't paste your decision's edit link.</p>
   {% if let Some(e) = error %}<p class="notice error" role="alert">{{ e }}</p>{% endif %}
-  <form method="post" action="/feedback" class="stack">
+  {#- Not boosted: htmx won't run the Turnstile script in swapped-in content, so this is a full
+      page load (the footer link to this page is unboosted for the same reason). -#}
+  <form method="post" action="/feedback" class="stack" hx-boost="false">
     <label for="fb-message">Your feedback</label>
     <textarea id="fb-message" name="message" rows="6" required maxlength="{{ max_message }}">{{ message }}</textarea>
     <label for="fb-contact">How can we reply? <span class="muted">(optional: email or name)</span></label>
@@ -20,6 +24,12 @@
       <label for="fb-website">Leave this empty</label>
       <input id="fb-website" name="website" type="text" tabindex="-1" autocomplete="off">
     </div>
+    {% if let Some(key) = turnstile_site_key %}
+    {#- Cloudflare Turnstile spam check. Usually invisible; sometimes a checkbox. Needs JavaScript. -#}
+    <div class="cf-turnstile" data-sitekey="{{ key }}" data-size="flexible" data-theme="auto"></div>
+    <noscript><p class="notice error">The spam check needs JavaScript. Please turn it on to send feedback.</p></noscript>
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+    {% endif %}
     <button type="submit">Send feedback</button>
   </form>
   {% endif %}
